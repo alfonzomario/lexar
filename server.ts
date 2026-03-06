@@ -80,6 +80,31 @@ async function startServer() {
     res.json({ status: 'ok' });
   });
 
+  // Resumen de fallo con IA (Pro solo)
+  app.post('/api/briefs/:id/summarize', async (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) return res.status(403).json({ error: 'Solo plan Pro puede usar el resumen con IA' });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'IA no configurada' });
+    const brief = db.prepare('SELECT * FROM case_briefs WHERE id = ?').get(req.params.id) as any;
+    if (!brief) return res.status(404).json({ error: 'Fallo no encontrado' });
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const prompt = `Resumí este fallo argentino en 3-4 párrafos claros: hechos relevantes, cuestión jurídica, doctrina aplicada y decisión. Lenguaje didáctico para estudiantes de Derecho. No des asesoramiento legal.\n\nFallo: ${brief.title}\nHechos: ${brief.facts || ''}\nCuestión: ${brief.issue || ''}\nRegla: ${brief.rule || ''}\nArgumentos: ${brief.reasoning || ''}\nDecisión: ${brief.holding || ''}`;
+      const result = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      });
+      const text = result.text ?? '';
+      res.json({ summary: text });
+    } catch (err: any) {
+      console.error('Summarize error:', err);
+      res.status(500).json({ error: 'Error al generar el resumen. Reintentá.' });
+    }
+  });
+
   // AI Chat (Gemini) - fallos
   app.post('/api/briefs/:id/ai-chat', async (req, res) => {
     const briefId = req.params.id;
@@ -187,6 +212,12 @@ async function startServer() {
   app.get('/api/subjects', (req, res) => {
     const subjects = db.prepare('SELECT * FROM subjects').all();
     res.json(subjects);
+  });
+
+  app.get('/api/subjects/:id', (req, res) => {
+    const subject = db.prepare('SELECT id, name, description, icon FROM subjects WHERE id = ?').get(req.params.id);
+    if (!subject) return res.status(404).json({ error: 'Materia no encontrada' });
+    res.json(subject);
   });
 
   app.post('/api/subjects', (req, res) => {
@@ -692,10 +723,119 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
     res.json(biblio);
   });
 
-  // Jobs
+  // Jobs (solo Pro y super_admin)
   app.get('/api/jobs', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: 'Debes iniciar sesión' });
+      return;
+    }
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    if (!user || (user.tier !== 'pro' && user.tier !== 'super_admin')) {
+      res.status(403).json({ error: 'La Bolsa de Trabajo es exclusiva del plan Pro' });
+      return;
+    }
     const jobs = db.prepare('SELECT * FROM jobs ORDER BY date DESC').all();
     res.json(jobs);
+  });
+
+  const requireBasicOrAbove = (req: express.Request, res: express.Response): number | null => {
+    const userId = getUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: 'Debes iniciar sesión' });
+      return null;
+    }
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    const allowed = user && ['basic', 'pro', 'admin', 'super_admin'].includes(user.tier);
+    if (!allowed) {
+      res.status(403).json({ error: 'Esta función es para plan Basic o superior' });
+      return null;
+    }
+    return userId;
+  };
+
+  // Para leer después (Basic+): listar con título y URL
+  app.get('/api/saved-for-later', (req, res) => {
+    const userId = requireBasicOrAbove(req, res);
+    if (userId === null) return;
+    const rows = db.prepare('SELECT resource_type, resource_id, created_at FROM saved_for_later WHERE user_id = ? ORDER BY created_at DESC').all(userId) as { resource_type: string; resource_id: number; created_at: string }[];
+    const out = rows.map((r) => {
+      let title = '';
+      let url = '';
+      if (r.resource_type === 'brief') {
+        const b = db.prepare('SELECT title FROM case_briefs WHERE id = ?').get(r.resource_id) as { title: string } | undefined;
+        title = b?.title || 'Fallos';
+        url = `/briefs/${r.resource_id}`;
+      } else if (r.resource_type === 'note') {
+        const n = db.prepare('SELECT title, subject_id FROM student_notes WHERE id = ?').get(r.resource_id) as { title: string; subject_id: number } | undefined;
+        title = n?.title || 'Apunte';
+        url = n ? `/subjects/${n.subject_id}` : '/subjects';
+      } else if (r.resource_type === 'exam') {
+        const e = db.prepare('SELECT title, subject_id FROM exams WHERE id = ?').get(r.resource_id) as { title: string; subject_id: number } | undefined;
+        title = e?.title || 'Examen';
+        url = e ? `/subjects/${e.subject_id}` : '/subjects';
+      }
+      return { ...r, title, url };
+    });
+    res.json(out);
+  });
+  app.post('/api/saved-for-later', (req, res) => {
+    const userId = requireBasicOrAbove(req, res);
+    if (userId === null) return;
+    const { resource_type, resource_id } = req.body;
+    if (!resource_type || resource_id == null) return res.status(400).json({ error: 'Faltan resource_type o resource_id' });
+    const now = new Date().toISOString();
+    try {
+      db.prepare('INSERT OR IGNORE INTO saved_for_later (user_id, resource_type, resource_id, created_at) VALUES (?, ?, ?, ?)').run(userId, resource_type, Number(resource_id), now);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al guardar' });
+    }
+  });
+  app.delete('/api/saved-for-later', (req, res) => {
+    const userId = requireBasicOrAbove(req, res);
+    if (userId === null) return;
+    const { resource_type, resource_id } = req.query;
+    if (!resource_type || resource_id == null) return res.status(400).json({ error: 'Faltan resource_type o resource_id' });
+    db.prepare('DELETE FROM saved_for_later WHERE user_id = ? AND resource_type = ? AND resource_id = ?').run(userId, String(resource_type), Number(resource_id));
+    res.json({ success: true });
+  });
+  app.get('/api/saved-for-later/check', (req, res) => {
+    const userId = requireBasicOrAbove(req, res);
+    if (userId === null) return;
+    const { resource_type, resource_id } = req.query;
+    if (!resource_type || resource_id == null) return res.status(400).json({ error: 'Faltan parámetros' });
+    const row = db.prepare('SELECT 1 FROM saved_for_later WHERE user_id = ? AND resource_type = ? AND resource_id = ?').get(userId, String(resource_type), Number(resource_id));
+    res.json({ saved: !!row });
+  });
+
+  // Notas privadas sobre recursos (Basic+): get/set por recurso
+  app.get('/api/user-notes/:resourceType/:resourceId', (req, res) => {
+    const userId = requireBasicOrAbove(req, res);
+    if (userId === null) return;
+    const { resourceType, resourceId } = req.params;
+    const row = db.prepare('SELECT content, created_at FROM user_resource_notes WHERE user_id = ? AND resource_type = ? AND resource_id = ?').get(userId, resourceType, resourceId) as { content: string; created_at: string } | undefined;
+    res.json(row || null);
+  });
+  app.post('/api/user-notes/:resourceType/:resourceId', (req, res) => {
+    const userId = requireBasicOrAbove(req, res);
+    if (userId === null) return;
+    const { resourceType, resourceId } = req.params;
+    const { content } = req.body;
+    const now = new Date().toISOString();
+    db.prepare('INSERT OR REPLACE INTO user_resource_notes (user_id, resource_type, resource_id, content, created_at) VALUES (?, ?, ?, ?, ?)').run(userId, resourceType, Number(resourceId), typeof content === 'string' ? content : '', now);
+    res.json({ success: true });
+  });
+
+  // Export note for PDF/print (Pro only)
+  app.get('/api/notes/:id/export', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) return res.status(403).json({ error: 'Solo plan Pro puede descargar' });
+    const row = db.prepare('SELECT title, content FROM student_notes WHERE id = ? AND status = ?').get(req.params.id, 'published') as { title: string; content: string } | undefined;
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.json({ title: row.title, content: row.content || '' });
   });
 
   // Student Notes
@@ -978,6 +1118,26 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
     res.json(users);
   });
 
+  // Chat rooms (Pro)
+  app.get('/api/chat-rooms', (req, res) => {
+    const rooms = db.prepare('SELECT id, slug, name, category FROM chat_rooms ORDER BY category, name').all();
+    res.json(rooms);
+  });
+
+  app.get('/api/chat-rooms/:id/messages', (req, res) => {
+    const roomId = req.params.id;
+    const limit = Math.min(100, parseInt(String(req.query.limit), 10) || 50);
+    const rows = db.prepare(`
+      SELECT rm.id, rm.room_id, rm.user_id, rm.content, rm.timestamp, users.name as user_name
+      FROM room_messages rm
+      JOIN users ON rm.user_id = users.id
+      WHERE rm.room_id = ?
+      ORDER BY rm.timestamp DESC
+      LIMIT ?
+    `).all(roomId, limit);
+    res.json(rows.reverse());
+  });
+
   // Messages
   app.get('/api/messages/:user1/:user2', (req, res) => {
     const { user1, user2 } = req.params;
@@ -994,6 +1154,33 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
   io.on('connection', (socket) => {
     socket.on('join', (userId) => {
       socket.join(`user_${userId}`);
+    });
+
+    socket.on('join_room', (roomId: number) => {
+      socket.join(`room_${roomId}`);
+    });
+
+    socket.on('leave_room', (roomId: number) => {
+      socket.leave(`room_${roomId}`);
+    });
+
+    socket.on('send_room_message', (data: { room_id: number; user_id: number; content: string }) => {
+      const { room_id, user_id, content } = data;
+      if (!room_id || !user_id || !content || typeof content !== 'string') return;
+      const timestamp = new Date().toISOString();
+      const result = db.prepare(
+        'INSERT INTO room_messages (room_id, user_id, content, timestamp) VALUES (?, ?, ?, ?)'
+      ).run(room_id, user_id, content.trim(), timestamp);
+      const user = db.prepare('SELECT name FROM users WHERE id = ?').get(user_id) as { name: string } | undefined;
+      const newMessage = {
+        id: result.lastInsertRowid,
+        room_id,
+        user_id,
+        user_name: user?.name ?? 'Usuario',
+        content: content.trim(),
+        timestamp,
+      };
+      io.to(`room_${room_id}`).emit('room_message', newMessage);
     });
 
     socket.on('send_message', (data) => {

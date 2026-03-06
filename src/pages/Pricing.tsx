@@ -16,7 +16,6 @@ export function Pricing() {
       description: 'Para estudiantes que recién empiezan.',
       features: [
         '5 resúmenes de fallos por mes',
-        '2 quizzes por semana',
         'Hasta 1 apunte y 1 examen por mes para ver',
         'Diccionario de latinismos',
         'Calculadora de plazos',
@@ -31,11 +30,11 @@ export function Pricing() {
       description: 'Ideal para preparar parciales.',
       features: [
         'Resúmenes de fallos ilimitados',
-        'Quizzes ilimitados',
         'Outlines por materia',
         'Hasta 10 apuntes y exámenes por mes para ver',
-        'Acceso a Bolsa de Trabajo',
         'Foro de debates',
+        "Lista 'Para leer después' (favoritos)",
+        'Notas privadas sobre fallos y apuntes',
       ],
       popular: true,
     },
@@ -48,9 +47,11 @@ export function Pricing() {
       features: [
         'Todo lo del plan Basic',
         'Vistas ilimitadas de apuntes y exámenes',
+        'Descarga de apuntes y exámenes en PDF',
+        'Resumen de fallos con IA',
+        'Simulacro por materia',
+        'Acceso a Bolsa de Trabajo',
         'Chat privado entre usuarios',
-        'Simulacros de examen',
-        'Modo offline (próximamente)',
       ]
     },
   ];
@@ -178,28 +179,39 @@ export function Pricing() {
         })}
       </div>
 
-      {/* Feature Highlights */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-8 border-t border-stone-200">
-        <div className="text-center space-y-3">
-          <div className="bg-indigo-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto">
-            <Briefcase className="w-6 h-6 text-indigo-600" />
+      {/* Qué incluye Pro — un solo bloque, claro */}
+      <div className="pt-8 border-t border-stone-200">
+        <p className="text-center text-sm font-semibold text-indigo-600 uppercase tracking-wider mb-6">
+          Incluido en el plan Pro
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="flex gap-4 p-4 rounded-2xl bg-stone-50/80 border border-stone-100">
+            <div className="shrink-0 w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
+              <Briefcase className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <h4 className="font-bold text-stone-900 mb-0.5">Bolsa de Trabajo</h4>
+              <p className="text-sm text-stone-500">Ofertas de pasantías y puestos junior en estudios jurídicos, exclusivas para la comunidad LexAR.</p>
+            </div>
           </div>
-          <h4 className="font-bold text-stone-900">Bolsa de Trabajo</h4>
-          <p className="text-sm text-stone-500">Accedé a ofertas exclusivas para pasantías y puestos junior en estudios jurídicos (Plan Basic+).</p>
-        </div>
-        <div className="text-center space-y-3">
-          <div className="bg-indigo-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto">
-            <FileText className="w-6 h-6 text-indigo-600" />
+          <div className="flex gap-4 p-4 rounded-2xl bg-stone-50/80 border border-stone-100">
+            <div className="shrink-0 w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
+              <FileText className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <h4 className="font-bold text-stone-900 mb-0.5">Apuntes sin límite</h4>
+              <p className="text-sm text-stone-500">Vistas ilimitadas de apuntes y exámenes, y podés subir los tuyos para que otros los vean.</p>
+            </div>
           </div>
-          <h4 className="font-bold text-stone-900">Apuntes Colaborativos</h4>
-          <p className="text-sm text-stone-500">Descargá los mejores resúmenes de otros alumnos verificados (Plan Pro).</p>
-        </div>
-        <div className="text-center space-y-3">
-          <div className="bg-indigo-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto">
-            <MessageCircle className="w-6 h-6 text-indigo-600" />
+          <div className="flex gap-4 p-4 rounded-2xl bg-stone-50/80 border border-stone-100">
+            <div className="shrink-0 w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
+              <MessageCircle className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <h4 className="font-bold text-stone-900 mb-0.5">Chat entre estudiantes</h4>
+              <p className="text-sm text-stone-500">Conectá con otros alumnos y armá grupos de estudio en tiempo real.</p>
+            </div>
           </div>
-          <h4 className="font-bold text-stone-900">Chat Privado</h4>
-          <p className="text-sm text-stone-500">Conectá directamente con otros estudiantes y armá grupos de estudio (Plan Pro).</p>
         </div>
       </div>
     </motion.div>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router';
 import {
   BookOpen, Scale, FileText, Layers, ArrowRight, BookMarked, FileQuestion,
-  Plus, X, Sparkles, Pencil, Trash2, Check, XCircle, ExternalLink, ThumbsUp
+  Plus, X, Sparkles, Pencil, Trash2, Check, XCircle, ExternalLink, ThumbsUp, Bookmark
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
@@ -21,6 +21,8 @@ function getDrivePreviewUrl(shareUrl: string): string | null {
 export function SubjectDetail() {
   const { id } = useParams();
   const { user, isSuperAdmin, isPro, isBasic } = useAuth();
+  const isBasicOrAbove = user && ['basic', 'pro', 'admin', 'super_admin'].includes(user.tier);
+  const [savedForLaterIds, setSavedForLaterIds] = useState<Set<string>>(new Set());
   const [documentQuota, setDocumentQuota] = useState<{ used: number; limit: number } | null>(null);
   const [subject, setSubject] = useState<any>(null);
   const [briefs, setBriefs] = useState<any[]>([]);
@@ -55,13 +57,57 @@ export function SubjectDetail() {
   const [flashcardFront, setFlashcardFront] = useState('');
   const [flashcardBack, setFlashcardBack] = useState('');
   const [submittingFlashcard, setSubmittingFlashcard] = useState(false);
+  const [privateNoteEditing, setPrivateNoteEditing] = useState<string | null>(null);
+  const [privateNotes, setPrivateNotes] = useState<Record<string, string>>({});
 
   const headers = () => (user ? { 'X-User-Id': String(user.id) } : {});
+
+  const openPrivateNoteEditor = (resourceType: string, resourceId: number) => {
+    if (!user || !isBasicOrAbove) return;
+    const key = `${resourceType}-${resourceId}`;
+    fetch(`/api/user-notes/${resourceType}/${resourceId}`, { headers: headers() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        setPrivateNotes((prev) => ({ ...prev, [key]: (data && data.content) || '' }));
+        setPrivateNoteEditing(key);
+      })
+      .catch(() => setPrivateNoteEditing(key));
+  };
+
+  const savePrivateNote = (resourceType: string, resourceId: number, content: string) => {
+    if (!user || !isBasicOrAbove) return;
+    fetch(`/api/user-notes/${resourceType}/${resourceId}`, {
+      method: 'POST',
+      headers: { ...headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    }).then(() => {
+      setPrivateNotes((prev) => ({ ...prev, [`${resourceType}-${resourceId}`]: content }));
+      setPrivateNoteEditing(null);
+    });
+  };
 
   const openPreview = (fileUrl: string, title: string) => {
     const previewUrl = getDrivePreviewUrl(fileUrl);
     if (previewUrl) setPreviewModal({ open: true, url: previewUrl, title });
     else window.open(fileUrl, '_blank');
+  };
+
+  const downloadNoteAsPdf = (noteId: number) => {
+    fetch(`/api/notes/${noteId}/export`, { headers: headers() })
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error('No autorizado')))
+      .then(({ title, content }) => {
+        const w = window.open('', '_blank');
+        if (!w) return;
+        w.document.write(`
+          <!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+          <style>body{font-family:system-ui;max-width:800px;margin:2rem auto;padding:0 1rem;line-height:1.6;}</style></head>
+          <body><h1>${title}</h1><div>${(content || '').replace(/\n/g, '<br>')}</div></body></html>
+        `);
+        w.document.close();
+        w.focus();
+        setTimeout(() => { w.print(); }, 300);
+      })
+      .catch(() => alert('No podés descargar este apunte. Solo plan Pro puede descargar en PDF.'));
   };
 
   const recordView = (type: 'note' | 'exam', resourceId: number) => {
@@ -73,6 +119,31 @@ export function SubjectDetail() {
     if (!isPro && !isSuperAdmin) fetch('/api/me/document-quota', { headers: headers() }).then((r) => r.json()).then(setDocumentQuota).catch(() => setDocumentQuota(null));
     else setDocumentQuota(null);
   }, [user, isPro, isSuperAdmin, activeTab]);
+
+  useEffect(() => {
+    if (!user || !isBasicOrAbove) return;
+    fetch('/api/saved-for-later', { headers: headers() })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: { resource_type: string; resource_id: number }[]) => {
+        setSavedForLaterIds(new Set(list.map((x) => `${x.resource_type}-${x.resource_id}`)));
+      })
+      .catch(() => {});
+  }, [user?.id, isBasicOrAbove]);
+
+  const toggleSavedForLater = (resourceType: 'note' | 'exam', resourceId: number) => {
+    if (!user) return;
+    const key = `${resourceType}-${resourceId}`;
+    const isSaved = savedForLaterIds.has(key);
+    if (isSaved) {
+      fetch(`/api/saved-for-later?resource_type=${resourceType}&resource_id=${resourceId}`, { method: 'DELETE', headers: headers() }).then(() => {
+        setSavedForLaterIds((s) => { const n = new Set(s); n.delete(key); return n; });
+      });
+    } else {
+      fetch('/api/saved-for-later', { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ resource_type: resourceType, resource_id: resourceId }) }).then(() => {
+        setSavedForLaterIds((s) => new Set(s).add(key));
+      });
+    }
+  };
 
   const openDocumentByQuota = async (type: 'note' | 'exam', resourceId: number, title: string) => {
     if (!user) return;
@@ -558,9 +629,19 @@ export function SubjectDetail() {
                           <ThumbsUp className="w-4 h-4" /> Me resultó útil
                         </button>
                       )}
+                      {isBasicOrAbove && n.status === 'published' && (
+                        <button onClick={() => toggleSavedForLater('note', n.id)} className={clsx('p-2 rounded-lg transition-colors', savedForLaterIds.has(`note-${n.id}`) ? 'text-indigo-600 bg-indigo-50' : 'text-stone-400 hover:bg-stone-100 hover:text-indigo-600')} title={savedForLaterIds.has(`note-${n.id}`) ? 'Quitar de Para leer después' : 'Guardar para leer después'}>
+                          <Bookmark className={clsx('w-4 h-4', savedForLaterIds.has(`note-${n.id}`) && 'fill-current')} />
+                        </button>
+                      )}
                       {n.file_url && (n.status === 'published' || isSuperAdmin) && (
                         <button onClick={() => { recordView('note', n.id); openPreview(n.file_url, n.title); }} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
                           Ver documento <ExternalLink className="w-4 h-4" />
+                        </button>
+                      )}
+                      {(isPro || isSuperAdmin) && n.status === 'published' && (
+                        <button onClick={() => downloadNoteAsPdf(n.id)} className="text-stone-600 text-sm font-medium flex items-center gap-1 hover:underline">
+                          Descargar PDF
                         </button>
                       )}
                       {n.has_document && (n.status === 'published' || isSuperAdmin) && !isPro && !isSuperAdmin && (documentQuota === null || documentQuota.used < documentQuota.limit) && (
@@ -586,6 +667,29 @@ export function SubjectDetail() {
                       {n.status === 'published' && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">Publicado</span>}
                       {n.status === 'rejected' && <span className="text-xs bg-stone-100 text-stone-600 px-2 py-1 rounded">Rechazado</span>}
                     </div>
+                    {isBasicOrAbove && n.status === 'published' && (
+                      <div className="w-full mt-3 pt-3 border-t border-stone-100">
+                        {privateNoteEditing === `note-${n.id}` ? (
+                          <div className="flex gap-2">
+                            <textarea
+                              value={privateNotes[`note-${n.id}`] ?? ''}
+                              onChange={(e) => setPrivateNotes((prev) => ({ ...prev, [`note-${n.id}`]: e.target.value }))}
+                              onBlur={(e) => { const v = e.target.value.trim(); savePrivateNote('note', n.id, v); setPrivateNoteEditing(null); }}
+                              placeholder="Tu nota privada..."
+                              className="flex-1 text-sm border border-stone-200 rounded-lg px-3 py-2 resize-none"
+                              rows={2}
+                              autoFocus
+                            />
+                            <button type="button" onClick={() => setPrivateNoteEditing(null)} className="text-stone-500 text-sm">Cerrar</button>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => openPrivateNoteEditor('note', n.id)} className="text-xs text-stone-500 hover:text-indigo-600 flex items-center gap-1">
+                            <Pencil className="w-3 h-3" />
+                            {privateNotes[`note-${n.id}`] ? `Mi nota: ${privateNotes[`note-${n.id}`].slice(0, 50)}${privateNotes[`note-${n.id}`].length > 50 ? '…' : ''}` : 'Agregar mi nota'}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -646,6 +750,11 @@ export function SubjectDetail() {
                           <ThumbsUp className="w-4 h-4" /> Me resultó útil
                         </button>
                       )}
+                      {isBasicOrAbove && ex.status === 'approved' && (
+                        <button onClick={() => toggleSavedForLater('exam', ex.id)} className={clsx('p-2 rounded-lg transition-colors', savedForLaterIds.has(`exam-${ex.id}`) ? 'text-indigo-600 bg-indigo-50' : 'text-stone-400 hover:bg-stone-100 hover:text-indigo-600')} title={savedForLaterIds.has(`exam-${ex.id}`) ? 'Quitar de Para leer después' : 'Guardar para leer después'}>
+                          <Bookmark className={clsx('w-4 h-4', savedForLaterIds.has(`exam-${ex.id}`) && 'fill-current')} />
+                        </button>
+                      )}
                       {isSuperAdmin && (
                         <>
                           {ex.status === 'pending' && (
@@ -660,9 +769,14 @@ export function SubjectDetail() {
                       {ex.status === 'pending' && !isSuperAdmin && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded">Pendiente de aprobación</span>}
                       {ex.status === 'approved' && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">Aprobado</span>}
                       {ex.file_url && (ex.status === 'approved' || isSuperAdmin) && (
-                        <button onClick={() => { recordView('exam', ex.id); openPreview(ex.file_url, ex.title); }} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
-                          Ver documento <ExternalLink className="w-4 h-4" />
-                        </button>
+                        <>
+                          <button onClick={() => { recordView('exam', ex.id); openPreview(ex.file_url, ex.title); }} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
+                            Ver documento <ExternalLink className="w-4 h-4" />
+                          </button>
+                          {(isPro || isSuperAdmin) && (
+                            <a href={ex.file_url} target="_blank" rel="noopener noreferrer" className="text-stone-600 text-sm font-medium hover:underline">Descargar PDF</a>
+                          )}
+                        </>
                       )}
                       {ex.has_document && ex.status === 'approved' && !isPro && !isSuperAdmin && (documentQuota === null || documentQuota.used < documentQuota.limit) && (
                         <button onClick={() => openDocumentByQuota('exam', ex.id, ex.title)} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
@@ -673,6 +787,29 @@ export function SubjectDetail() {
                         <Link to="/pricing" className="text-amber-600 text-sm font-medium flex items-center gap-1 hover:underline">Límite del mes usado. Ver planes para más</Link>
                       )}
                     </div>
+                    {isBasicOrAbove && ex.status === 'approved' && (
+                      <div className="w-full mt-3 pt-3 border-t border-stone-100">
+                        {privateNoteEditing === `exam-${ex.id}` ? (
+                          <div className="flex gap-2">
+                            <textarea
+                              value={privateNotes[`exam-${ex.id}`] ?? ''}
+                              onChange={(e) => setPrivateNotes((prev) => ({ ...prev, [`exam-${ex.id}`]: e.target.value }))}
+                              onBlur={(e) => { const v = e.target.value.trim(); savePrivateNote('exam', ex.id, v); setPrivateNoteEditing(null); }}
+                              placeholder="Tu nota privada..."
+                              className="flex-1 text-sm border border-stone-200 rounded-lg px-3 py-2 resize-none"
+                              rows={2}
+                              autoFocus
+                            />
+                            <button type="button" onClick={() => setPrivateNoteEditing(null)} className="text-stone-500 text-sm">Cerrar</button>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => openPrivateNoteEditor('exam', ex.id)} className="text-xs text-stone-500 hover:text-indigo-600 flex items-center gap-1">
+                            <Pencil className="w-3 h-3" />
+                            {privateNotes[`exam-${ex.id}`] ? `Mi nota: ${privateNotes[`exam-${ex.id}`].slice(0, 50)}${privateNotes[`exam-${ex.id}`].length > 50 ? '…' : ''}` : 'Agregar mi nota'}
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

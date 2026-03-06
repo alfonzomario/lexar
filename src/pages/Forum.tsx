@@ -1,9 +1,39 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { Users, MessageSquare, Search, Filter } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useAuth } from '../contexts/AuthContext';
 
 export function Forum() {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
+
+  const isBasicOrAbove = user && (user.tier === 'basic' || user.tier === 'pro' || user.tier === 'admin' || user.tier === 'super_admin');
+
+  if (!user) {
+    return (
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-2xl mx-auto text-center py-16 px-6">
+        <div className="bg-stone-100 rounded-2xl p-10">
+          <Users className="w-14 h-14 text-stone-400 mx-auto mb-4" />
+          <p className="text-stone-600 mb-4">Iniciá sesión y contratá el plan Basic o superior para acceder al Foro.</p>
+          <Link to="/pricing" className="text-indigo-600 font-medium hover:underline">Ver planes</Link>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (!isBasicOrAbove) {
+    return (
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-2xl mx-auto text-center py-16 px-6">
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-10">
+          <Users className="w-14 h-14 text-amber-600 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-stone-900 mb-2">Foro Basic</h2>
+          <p className="text-stone-600 mb-6">El foro de discusión es exclusivo del plan Basic o superior. Actualizá tu plan para participar.</p>
+          <Link to="/pricing" className="inline-flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-indigo-700 transition-colors">Ver planes Basic</Link>
+        </div>
+      </motion.div>
+    );
+  }
 
   // Mock data for forum
   const topics = [

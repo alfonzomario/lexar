@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router';
-import { BookOpen, Scale, BookA, Calculator, LayoutDashboard, User, Briefcase, FileText, CreditCard, MessageCircle, Newspaper, GraduationCap, Film, Users, ChevronDown, Menu, X, LogOut, Check, PencilLine } from 'lucide-react';
+import { BookOpen, Scale, BookA, Calculator, LayoutDashboard, User, Briefcase, FileText, CreditCard, MessageCircle, Newspaper, GraduationCap, Film, Users, ChevronDown, Menu, X, LogOut, Check, PencilLine, Bookmark, FileQuestion } from 'lucide-react';
 import { clsx } from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
@@ -59,6 +59,7 @@ export function Layout() {
         { name: 'Apuntes', path: '/notes', icon: FileText, description: 'Resúmenes de alumnos' },
         { name: 'Universidades', path: '/universities', icon: GraduationCap, description: 'Planes de estudio' },
         { name: 'Normativa', path: '/normativa', icon: Scale, description: 'Leyes y códigos' },
+        { name: 'Para leer después', path: '/saved', icon: Bookmark, description: 'Tu lista de favoritos' },
       ]
     },
     {
@@ -66,6 +67,7 @@ export function Layout() {
       items: [
         { name: 'Calculadora Plazos', path: '/calculator', icon: Calculator, description: 'Calculadora procesal' },
         { name: 'Latinismos', path: '/latinisms', icon: BookA, description: 'Diccionario de términos' },
+        { name: 'Simulacro', path: '/simulacro', icon: FileQuestion, description: 'Simulacro por materia (Pro)' },
       ]
     },
     {
@@ -155,7 +157,14 @@ export function Layout() {
                       className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-72 bg-white rounded-xl shadow-xl border border-stone-100 overflow-hidden"
                     >
                       <div className="p-2 grid gap-1">
-                        {group.items.map((item) => {
+                        {group.items
+                          .filter((item) => {
+                            if (item.path === '/jobs') return user?.tier === 'pro' || isSuperAdmin;
+                            if (item.path === '/forum' || item.path === '/saved') return user && (user.tier === 'basic' || user.tier === 'pro' || user.tier === 'admin' || isSuperAdmin);
+                            if (item.path === '/simulacro') return user?.tier === 'pro' || user?.tier === 'admin' || isSuperAdmin;
+                            return true;
+                          })
+                          .map((item) => {
                           const isActive = location.pathname === item.path;
                           return (
                             <Link
@@ -311,7 +320,14 @@ export function Layout() {
                     {group.name}
                   </h3>
                   <div className="grid grid-cols-1 gap-2">
-                    {group.items.map((item) => (
+                    {group.items
+                      .filter((item) => {
+                            if (item.path === '/jobs') return user?.tier === 'pro' || isSuperAdmin;
+                            if (item.path === '/forum' || item.path === '/saved') return user && (user.tier === 'basic' || user.tier === 'pro' || user.tier === 'admin' || isSuperAdmin);
+                            if (item.path === '/simulacro') return user?.tier === 'pro' || user?.tier === 'admin' || isSuperAdmin;
+                            return true;
+                          })
+                      .map((item) => (
                       <Link
                         key={item.path}
                         to={item.path}

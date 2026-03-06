@@ -27,6 +27,11 @@ export function BriefDetail() {
   const [brief, setBrief] = useState<any>(null);
   const [annotations, setAnnotations] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('tldr');
+  const [savedForLater, setSavedForLater] = useState(false);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const isBasicOrAbove = user && ['basic', 'pro', 'admin', 'super_admin'].includes(user.tier);
+  const isPro = user?.tier === 'pro' || user?.tier === 'admin' || user?.tier === 'super_admin';
 
   // AI Chat States
   const [messages, setMessages] = useState<{ role: 'user' | 'model', text: string }[]>([]);
@@ -50,6 +55,35 @@ export function BriefDetail() {
 
     fetchAnnotations();
   }, [id, user]);
+
+  useEffect(() => {
+    if (!user || !isBasicOrAbove || !id) return;
+    fetch(`/api/saved-for-later/check?resource_type=brief&resource_id=${id}`, { headers: { 'X-User-Id': String(user.id) } })
+      .then((r) => r.json())
+      .then((d) => setSavedForLater(!!d.saved))
+      .catch(() => setSavedForLater(false));
+  }, [user?.id, isBasicOrAbove, id]);
+
+  const toggleSavedForLater = () => {
+    if (!user || !id) return;
+    const headers = { 'X-User-Id': String(user.id), 'Content-Type': 'application/json' };
+    if (savedForLater) {
+      fetch(`/api/saved-for-later?resource_type=brief&resource_id=${id}`, { method: 'DELETE', headers: { 'X-User-Id': String(user.id) } }).then(() => setSavedForLater(false));
+    } else {
+      fetch('/api/saved-for-later', { method: 'POST', headers, body: JSON.stringify({ resource_type: 'brief', resource_id: Number(id) }) }).then(() => setSavedForLater(true));
+    }
+  };
+
+  const fetchAiSummary = () => {
+    if (!user || !id || !isPro) return;
+    setAiSummaryLoading(true);
+    setAiSummary(null);
+    fetch(`/api/briefs/${id}/summarize`, { method: 'POST', headers: { 'X-User-Id': String(user.id), 'Content-Type': 'application/json' } })
+      .then((r) => r.json())
+      .then((data) => setAiSummary(data.summary || data.error || 'No se pudo generar.'))
+      .catch(() => setAiSummary('Error de conexión.'))
+      .finally(() => setAiSummaryLoading(false));
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -166,9 +200,15 @@ export function BriefDetail() {
         <div className="lg:col-span-2 space-y-8">
           <div className="bg-white p-8 md:p-12 rounded-3xl shadow-sm border border-stone-100 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 flex gap-2">
-              <button className="p-2 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors">
-                <Bookmark className="w-5 h-5" />
-              </button>
+              {isBasicOrAbove && (
+                <button
+                  onClick={toggleSavedForLater}
+                  className={clsx('p-2 rounded-full transition-colors', savedForLater ? 'text-indigo-600 bg-indigo-50 fill-indigo-600' : 'text-stone-400 hover:text-indigo-600 hover:bg-indigo-50')}
+                  title={savedForLater ? 'Quitar de Para leer después' : 'Guardar para leer después'}
+                >
+                  <Bookmark className={clsx('w-5 h-5', savedForLater && 'fill-current')} />
+                </button>
+              )}
               <button className="p-2 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors">
                 <Share2 className="w-5 h-5" />
               </button>
@@ -296,6 +336,25 @@ export function BriefDetail() {
 
         {/* AI Sidebar */}
         <div className="lg:sticky lg:top-24 space-y-6 h-fit">
+          {isPro && (
+            <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
+              <h3 className="font-bold text-stone-900 mb-2 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                Resumen con IA
+              </h3>
+              {!aiSummary && !aiSummaryLoading && (
+                <button type="button" onClick={fetchAiSummary} className="text-sm text-indigo-600 font-medium hover:underline">
+                  Generar resumen del fallo
+                </button>
+              )}
+              {aiSummaryLoading && <p className="text-sm text-stone-500">Generando...</p>}
+              {aiSummary && !aiSummaryLoading && (
+                <div className="text-sm text-stone-700 leading-relaxed whitespace-pre-line mt-2">
+                  <Markdown>{aiSummary}</Markdown>
+                </div>
+              )}
+            </div>
+          )}
           <div className="bg-stone-900 rounded-3xl p-6 text-white shadow-xl h-[500px] md:h-[600px] flex flex-col">
             <div className="flex items-center gap-3 mb-6 shrink-0">
               <div className="bg-indigo-500 p-2 rounded-xl">

@@ -1,21 +1,64 @@
 import { useEffect, useState } from 'react';
 import { Briefcase, MapPin, Clock, Search, Building2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useAuth } from '../contexts/AuthContext';
+import { Link } from 'react-router';
 
 export function Jobs() {
+  const { user } = useAuth();
   const [jobs, setJobs] = useState([]);
   const [search, setSearch] = useState('');
 
+  const isPro = user?.tier === 'pro' || user?.tier === 'super_admin';
+
   useEffect(() => {
-    fetch('/api/jobs')
-      .then((res) => res.json())
-      .then((data) => setJobs(data));
-  }, []);
+    if (!isPro) return;
+    fetch('/api/jobs', { headers: user ? { 'X-User-Id': String(user.id) } : {} })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setJobs(data))
+      .catch(() => setJobs([]));
+  }, [isPro, user?.id]);
 
   const filtered = jobs.filter((j: any) =>
     j.title.toLowerCase().includes(search.toLowerCase()) ||
     j.firm.toLowerCase().includes(search.toLowerCase())
   );
+
+  if (user && !isPro) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="max-w-2xl mx-auto text-center py-16 px-6"
+      >
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-10">
+          <Briefcase className="w-14 h-14 text-amber-600 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-stone-900 mb-2">Bolsa de Trabajo Pro</h2>
+          <p className="text-stone-600 mb-6">
+            La bolsa de empleo es exclusiva del plan Pro. Actualizá tu plan para ver ofertas de pasantías y puestos en estudios jurídicos.
+          </p>
+          <Link to="/pricing" className="inline-flex items-center gap-2 bg-stone-900 text-white px-6 py-3 rounded-xl font-medium hover:bg-stone-800 transition-colors">
+            Ver planes Pro
+          </Link>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="max-w-2xl mx-auto text-center py-16 px-6"
+      >
+        <div className="bg-stone-100 rounded-2xl p-10">
+          <p className="text-stone-600 mb-4">Iniciá sesión y contratá el plan Pro para acceder a la Bolsa de Trabajo.</p>
+          <Link to="/pricing" className="text-indigo-600 font-medium hover:underline">Ver planes</Link>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div

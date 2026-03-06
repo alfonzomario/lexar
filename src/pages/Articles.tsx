@@ -1,12 +1,17 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router';
 import { Newspaper, PenTool, MessageSquare, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
+import { useAuth } from '../contexts/AuthContext';
 
 export function Articles() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'news' | 'articles' | 'submit'>('news');
   const [news, setNews] = useState<any[]>([]);
   const [articles, setArticles] = useState<any[]>([]);
+
+  const canPublish = user && (user.tier === 'basic' || user.tier === 'pro' || user.tier === 'admin' || user.tier === 'super_admin');
 
   useEffect(() => {
     fetch('/api/news').then(res => res.json()).then(setNews);
@@ -123,7 +128,19 @@ export function Articles() {
 
       {activeTab === 'submit' && (
         <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200">
-          <h2 className="text-2xl font-bold text-stone-900 mb-6">Publicá tu artículo</h2>
+          {!user ? (
+            <div className="text-center py-8">
+              <p className="text-stone-600 mb-4">Iniciá sesión para publicar artículos.</p>
+              <Link to="/pricing" className="text-indigo-600 font-medium hover:underline">Ver planes</Link>
+            </div>
+          ) : !canPublish ? (
+            <div className="text-center py-8">
+              <h2 className="text-xl font-bold text-stone-900 mb-2">Publicar artículos es Basic</h2>
+              <p className="text-stone-600 mb-6">Para enviar artículos a la comunidad necesitás el plan Basic o superior.</p>
+              <Link to="/pricing" className="inline-flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-indigo-700 transition-colors">Ver planes Basic</Link>
+            </div>
+          ) : (
+          <><h2 className="text-2xl font-bold text-stone-900 mb-6">Publicá tu artículo</h2>
           <form className="space-y-6" onSubmit={(e) => e.preventDefault()}>
             <div>
               <label className="block text-sm font-semibold text-stone-900 mb-2">Título del artículo</label>
@@ -148,6 +165,8 @@ export function Articles() {
               Enviar para revisión
             </button>
           </form>
+          </>
+          )}
         </div>
       )}
 

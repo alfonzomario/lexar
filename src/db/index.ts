@@ -187,6 +187,23 @@ function initDb() {
       FOREIGN KEY (receiver_id) REFERENCES users(id)
     );
 
+    CREATE TABLE IF NOT EXISTS chat_rooms (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS room_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      FOREIGN KEY (room_id) REFERENCES chat_rooms(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
     CREATE TABLE IF NOT EXISTS procedural_acts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       jurisdiction TEXT NOT NULL,
@@ -338,6 +355,31 @@ function initDb() {
     )
   `);
 
+  // Para leer después (Basic+): favoritos por usuario
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS saved_for_later (
+      user_id INTEGER NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, resource_type, resource_id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  // Notas privadas sobre recursos (Basic+): una nota por usuario por recurso (apuntes/exámenes); fallos usan text_annotations
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_resource_notes (
+      user_id INTEGER NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, resource_type, resource_id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
   // Migration: Move subject_id from case_briefs to case_brief_subjects
   const briefsWithSubject = db.prepare('SELECT id, subject_id FROM case_briefs WHERE subject_id IS NOT NULL').all() as any[];
   if (briefsWithSubject.length > 0) {
@@ -364,6 +406,39 @@ function initDb() {
   if (superAdminCount.count === 0) {
     db.prepare("INSERT INTO users (name, email, tier, total_views, profile_role) VALUES ('Super Admin', 'admin@lexar.ar', 'super_admin', 0, 'Administrador')").run();
     console.log('Created default super_admin user (admin@lexar.ar).');
+  }
+
+  // Seed chat rooms if empty
+  const roomCount = db.prepare('SELECT COUNT(*) as count FROM chat_rooms').get() as { count: number };
+  if (roomCount.count === 0) {
+    const insertRoom = db.prepare('INSERT INTO chat_rooms (slug, name, category) VALUES (?, ?, ?)');
+    const materias = [
+      'Derecho Constitucional',
+      'Derecho Penal',
+      'Derecho Civil',
+      'Derecho Comercial y Empresarial',
+      'Derecho Administrativo y Público',
+      'Derecho Laboral',
+      'Apuntes, resúmenes y material de estudio',
+      'Práctica profesional, pasantías y estudios jurídicos',
+      'Debate jurídico y actualidad',
+      'Comunidad estudiantil',
+    ];
+    const universidades = [
+      'Universidad de Buenos Aires (UBA) – Facultad de Derecho',
+      'Universidad Nacional de La Plata (UNLP) – Facultad de Ciencias Jurídicas y Sociales',
+      'Universidad Nacional de Córdoba (UNC) – Facultad de Derecho',
+      'Universidad Nacional de Rosario (UNR) – Facultad de Derecho',
+      'Universidad Nacional del Litoral (UNL) – Facultad de Ciencias Jurídicas y Sociales',
+      'Universidad Nacional de Cuyo (UNCuyo) – Facultad de Derecho',
+      'Universidad Nacional de Tucumán (UNT) – Facultad de Derecho',
+      'Universidad Austral – Facultad de Derecho',
+      'Universidad Católica Argentina (UCA) – Facultad de Derecho',
+      'Universidad Torcuato Di Tella (UTDT) – Escuela de Derecho',
+    ];
+    materias.forEach((name, i) => insertRoom.run(`materia-${i + 1}`, name, 'materia'));
+    universidades.forEach((name, i) => insertRoom.run(`universidad-${i + 1}`, name, 'universidad'));
+    console.log('Seeded chat rooms.');
   }
 }
 

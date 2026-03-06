@@ -17,6 +17,8 @@ import { Articles } from './pages/Articles';
 import { Universities } from './pages/Universities';
 import { Movies } from './pages/Movies';
 import { Forum } from './pages/Forum';
+import { SavedForLater } from './pages/SavedForLater';
+import { Simulacro } from './pages/Simulacro';
 import { Normativa } from './pages/Normativa';
 import { NormaDetail } from './pages/NormaDetail';
 import { AuthProvider } from './contexts/AuthContext';
@@ -45,6 +47,9 @@ export function AppRouter() {
             <Route path="normativa" element={<Normativa />} />
             <Route path="normativa/:id" element={<NormaDetail />} />
             <Route path="forum" element={<Forum />} />
+            <Route path="saved" element={<SavedForLater />} />
+            <Route path="simulacro" element={<Simulacro />} />
+            <Route path="simulacro/:subjectId" element={<Simulacro />} />
             <Route path="my-notes" element={<MyNotes />} />
           </Route>
         </Routes>
