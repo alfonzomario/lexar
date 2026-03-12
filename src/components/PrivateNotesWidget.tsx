@@ -31,7 +31,7 @@ export function PrivateNotesWidget() {
 
         // Attempt to extract a decent title from the current page
         const h1Title = document.querySelector('h1')?.textContent;
-        const fallbackTitle = document.title !== 'LexAR' ? document.title.replace(' - LexAR', '') : 'Anotación';
+        const fallbackTitle = document.title !== 'LexARG' ? document.title.replace(' - LexARG', '') : 'Anotación';
         const pageTitle = h1Title || fallbackTitle;
 
         try {

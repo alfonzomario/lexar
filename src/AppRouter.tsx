@@ -15,6 +15,7 @@ import { MyNotes } from './pages/MyNotes';
 import { Chat } from './pages/Chat';
 import { Articles } from './pages/Articles';
 import { Universities } from './pages/Universities';
+import { UniversityDetail } from './pages/UniversityDetail';
 import { Movies } from './pages/Movies';
 import { Forum } from './pages/Forum';
 import { SavedForLater } from './pages/SavedForLater';
@@ -43,6 +44,7 @@ export function AppRouter() {
             <Route path="chat" element={<Chat />} />
             <Route path="articles" element={<Articles />} />
             <Route path="universities" element={<Universities />} />
+            <Route path="universities/:uniId" element={<UniversityDetail />} />
             <Route path="movies" element={<Movies />} />
             <Route path="normativa" element={<Normativa />} />
             <Route path="normativa/:id" element={<NormaDetail />} />

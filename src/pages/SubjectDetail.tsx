@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router';
+import { useParams, Link, useSearchParams } from 'react-router';
 import {
   BookOpen, Scale, FileText, Layers, ArrowRight, BookMarked, FileQuestion,
-  Plus, X, Sparkles, Pencil, Trash2, Check, XCircle, ExternalLink, ThumbsUp, Bookmark
+  Plus, X, Sparkles, Pencil, Trash2, Check, XCircle, ExternalLink, ThumbsUp, Bookmark, School
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
@@ -20,6 +20,8 @@ function getDrivePreviewUrl(shareUrl: string): string | null {
 
 export function SubjectDetail() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const universityId = searchParams.get('university_id');
   const { user, isSuperAdmin, isPro, isBasic } = useAuth();
   const isBasicOrAbove = user && ['basic', 'pro', 'admin', 'super_admin'].includes(user.tier);
   const [savedForLaterIds, setSavedForLaterIds] = useState<Set<string>>(new Set());
@@ -38,7 +40,7 @@ export function SubjectDetail() {
   const [examDesc, setExamDesc] = useState('');
   const [examUrl, setExamUrl] = useState('');
   const [examYear, setExamYear] = useState<string>('');
-  const [examUniversityId, setExamUniversityId] = useState<string>('');
+  const [examUniversityId, setExamUniversityId] = useState<string>(universityId || '');
   const [submittingExam, setSubmittingExam] = useState(false);
   const [generatingFlash, setGeneratingFlash] = useState(false);
   const [editingCard, setEditingCard] = useState<number | null>(null);
@@ -49,7 +51,7 @@ export function SubjectDetail() {
   const [noteFileUrl, setNoteFileUrl] = useState('');
   const [noteDescription, setNoteDescription] = useState('');
   const [noteYear, setNoteYear] = useState<string>('');
-  const [noteUniversityId, setNoteUniversityId] = useState<string>('');
+  const [noteUniversityId, setNoteUniversityId] = useState<string>(universityId || '');
   const [submittingNote, setSubmittingNote] = useState(false);
   const [universities, setUniversities] = useState<{ id: number; name: string }[]>([]);
   const [previewModal, setPreviewModal] = useState<{ open: boolean; url: string; title: string }>({ open: false, url: '', title: '' });
@@ -222,17 +224,19 @@ export function SubjectDetail() {
 
   useEffect(() => {
     if (!id || activeTab !== 'apuntes') return;
-    fetch(`/api/subjects/${id}/notes`, { headers: headers() }).then((r) => r.json()).then(setNotes);
-  }, [id, activeTab, user]);
+    const url = `/api/subjects/${id}/notes${universityId ? `?university_id=${universityId}` : ''}`;
+    fetch(url, { headers: headers() }).then((r) => r.json()).then(setNotes);
+  }, [id, activeTab, user, universityId]);
 
   useEffect(() => {
     if (!id || activeTab !== 'exams') return;
     setLoadingExams(true);
-    fetch(`/api/subjects/${id}/exams`, { headers: headers() })
+    const url = `/api/subjects/${id}/exams${universityId ? `?university_id=${universityId}` : ''}`;
+    fetch(url, { headers: headers() })
       .then((r) => r.json())
       .then((data) => { setExams(data); setLoadingExams(false); })
       .catch(() => setLoadingExams(false));
-  }, [id, activeTab, user]);
+  }, [id, activeTab, user, universityId]);
 
   useEffect(() => {
     if (!id || activeTab !== 'flashcards') return;
@@ -245,7 +249,8 @@ export function SubjectDetail() {
 
   const refetchExams = () => {
     if (!id) return;
-    fetch(`/api/subjects/${id}/exams`, { headers: headers() }).then((r) => r.json()).then(setExams);
+    const url = `/api/subjects/${id}/exams${universityId ? `?university_id=${universityId}` : ''}`;
+    fetch(url, { headers: headers() }).then((r) => r.json()).then(setExams);
   };
 
   const refetchFlashcards = () => {
@@ -255,7 +260,8 @@ export function SubjectDetail() {
 
   const refetchNotes = () => {
     if (!id) return;
-    fetch(`/api/subjects/${id}/notes`, { headers: headers() }).then((r) => r.json()).then(setNotes);
+    const url = `/api/subjects/${id}/notes${universityId ? `?university_id=${universityId}` : ''}`;
+    fetch(url, { headers: headers() }).then((r) => r.json()).then(setNotes);
   };
 
   const handleSubmitNote = async (e: React.FormEvent) => {
@@ -498,9 +504,16 @@ export function SubjectDetail() {
             <BookOpen className="w-8 h-8 text-indigo-600" />
           )}
         </div>
-        <div>
+        <div className="flex-1">
           <h1 className="text-3xl font-bold tracking-tight text-stone-900">{subject.name}</h1>
-          <p className="text-stone-500 mt-1">{subject.description}</p>
+          <div className="flex items-center gap-3 mt-1">
+            <p className="text-stone-500">{subject.description}</p>
+            {universityId && (
+              <span className="bg-sky-50 text-sky-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-sky-100 uppercase tracking-wider whitespace-nowrap">
+                Filtro: {universities.find((un) => un.id === Number(universityId))?.name || 'Universidad'}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -615,85 +628,104 @@ export function SubjectDetail() {
                 <p>No hay apuntes publicados para esta materia.</p>
                 {user && <p className="text-sm mt-2">Podés subir uno con el botón &quot;Subir apunte&quot; (un admin lo revisará y, si lo aprueba, las vistas sumarán para tu tier).</p>}
               </div>
-            ) : (
-              <ul className="grid gap-4">
-                {notes.map((n: any) => (
-                  <li key={n.id} className="bg-white p-5 rounded-2xl border border-stone-100 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-stone-900">{n.title}</p>
-                      <p className="text-sm text-stone-500">{n.author_name}{n.year ? ` · ${n.year}` : ''}{n.university_name ? ` · ${n.university_name}` : ''} · {(n.views ?? 0)} vistas · {(n.vote_count ?? 0)} votaciones</p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {n.status === 'published' && (
-                        <button onClick={() => handleVoteNote(n.id)} className={clsx('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-medium transition', n.user_voted ? 'bg-indigo-100 text-indigo-700' : 'bg-stone-100 text-stone-600 hover:bg-indigo-50 hover:text-indigo-600')} title="Me resultó útil">
-                          <ThumbsUp className="w-4 h-4" /> Me resultó útil
-                        </button>
-                      )}
-                      {isBasicOrAbove && n.status === 'published' && (
-                        <button onClick={() => toggleSavedForLater('note', n.id)} className={clsx('p-2 rounded-lg transition-colors', savedForLaterIds.has(`note-${n.id}`) ? 'text-indigo-600 bg-indigo-50' : 'text-stone-400 hover:bg-stone-100 hover:text-indigo-600')} title={savedForLaterIds.has(`note-${n.id}`) ? 'Quitar de Para leer después' : 'Guardar para leer después'}>
-                          <Bookmark className={clsx('w-4 h-4', savedForLaterIds.has(`note-${n.id}`) && 'fill-current')} />
-                        </button>
-                      )}
-                      {n.file_url && (n.status === 'published' || isSuperAdmin) && (
-                        <button onClick={() => { recordView('note', n.id); openPreview(n.file_url, n.title); }} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
-                          Ver documento <ExternalLink className="w-4 h-4" />
-                        </button>
-                      )}
-                      {(isPro || isSuperAdmin) && n.status === 'published' && (
-                        <button onClick={() => downloadNoteAsPdf(n.id)} className="text-stone-600 text-sm font-medium flex items-center gap-1 hover:underline">
-                          Descargar PDF
-                        </button>
-                      )}
-                      {n.has_document && (n.status === 'published' || isSuperAdmin) && !isPro && !isSuperAdmin && (documentQuota === null || documentQuota.used < documentQuota.limit) && (
-                        <button onClick={() => openDocumentByQuota('note', n.id, n.title)} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
-                          Ver documento <ExternalLink className="w-4 h-4" />
-                        </button>
-                      )}
-                      {n.has_document && (n.status === 'published' || isSuperAdmin) && !isPro && !isSuperAdmin && documentQuota !== null && documentQuota.used >= documentQuota.limit && (
-                        <Link to="/pricing" className="text-amber-600 text-sm font-medium flex items-center gap-1 hover:underline">Límite del mes usado. Ver planes para más</Link>
-                      )}
-                      {isSuperAdmin && (
-                        <>
-                          {n.status === 'pending' && (
-                            <>
-                              <button onClick={() => handleApproveNote(n.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Aprobar"><Check className="w-5 h-5" /></button>
-                              <button onClick={() => handleRejectNote(n.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="Rechazar"><XCircle className="w-5 h-5" /></button>
-                            </>
-                          )}
-                          <button onClick={() => handleDeleteNote(n.id)} className="p-2 text-stone-400 hover:bg-red-50 hover:text-red-600 rounded-lg" title="Eliminar"><Trash2 className="w-5 h-5" /></button>
-                        </>
-                      )}
-                      {isSuperAdmin && n.status === 'pending' && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded">Pendiente</span>}
-                      {n.status === 'published' && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">Publicado</span>}
-                      {n.status === 'rejected' && <span className="text-xs bg-stone-100 text-stone-600 px-2 py-1 rounded">Rechazado</span>}
-                    </div>
-                    {isBasicOrAbove && n.status === 'published' && (
-                      <div className="w-full mt-3 pt-3 border-t border-stone-100">
-                        {privateNoteEditing === `note-${n.id}` ? (
-                          <div className="flex gap-2">
-                            <textarea
-                              value={privateNotes[`note-${n.id}`] ?? ''}
-                              onChange={(e) => setPrivateNotes((prev) => ({ ...prev, [`note-${n.id}`]: e.target.value }))}
-                              onBlur={(e) => { const v = e.target.value.trim(); savePrivateNote('note', n.id, v); setPrivateNoteEditing(null); }}
-                              placeholder="Tu nota privada..."
-                              className="flex-1 text-sm border border-stone-200 rounded-lg px-3 py-2 resize-none"
-                              rows={2}
-                              autoFocus
-                            />
-                            <button type="button" onClick={() => setPrivateNoteEditing(null)} className="text-stone-500 text-sm">Cerrar</button>
-                          </div>
-                        ) : (
-                          <button type="button" onClick={() => openPrivateNoteEditor('note', n.id)} className="text-xs text-stone-500 hover:text-indigo-600 flex items-center gap-1">
-                            <Pencil className="w-3 h-3" />
-                            {privateNotes[`note-${n.id}`] ? `Mi nota: ${privateNotes[`note-${n.id}`].slice(0, 50)}${privateNotes[`note-${n.id}`].length > 50 ? '…' : ''}` : 'Agregar mi nota'}
-                          </button>
-                        )}
+            ) : (() => {
+                const groupedNotes = notes.reduce((acc: any, n: any) => {
+                  const uni = n.university_name || 'General / Otras';
+                  if (!acc[uni]) acc[uni] = [];
+                  acc[uni].push(n);
+                  return acc;
+                }, {});
+
+                return (
+                  <div className="space-y-8">
+                    {Object.entries(groupedNotes).map(([uni, uniNotes]: [string, any]) => (
+                      <div key={uni} className="space-y-4">
+                        <h3 className="text-lg font-bold text-stone-700 flex items-center gap-2 px-1">
+                          <School className="w-5 h-5 text-stone-400" />
+                          {uni}
+                        </h3>
+                        <ul className="grid gap-4">
+                          {uniNotes.map((n: any) => (
+                            <li key={n.id} className="bg-white p-5 rounded-2xl border border-stone-100 flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="font-semibold text-stone-900">{n.title}</p>
+                                <p className="text-sm text-stone-500">{n.author_name}{n.year ? ` · ${n.year}` : ''} · {(n.views ?? 0)} vistas · {(n.vote_count ?? 0)} votaciones</p>
+                              </div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {n.status === 'published' && (
+                                  <button onClick={() => handleVoteNote(n.id)} className={clsx('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-medium transition', n.user_voted ? 'bg-indigo-100 text-indigo-700' : 'bg-stone-100 text-stone-600 hover:bg-indigo-50 hover:text-indigo-600')} title="Me resultó útil">
+                                    <ThumbsUp className="w-4 h-4" /> Me resultó útil
+                                  </button>
+                                )}
+                                {isBasicOrAbove && n.status === 'published' && (
+                                  <button onClick={() => toggleSavedForLater('note', n.id)} className={clsx('p-2 rounded-lg transition-colors', savedForLaterIds.has(`note-${n.id}`) ? 'text-indigo-600 bg-indigo-50' : 'text-stone-400 hover:bg-stone-100 hover:text-indigo-600')} title={savedForLaterIds.has(`note-${n.id}`) ? 'Quitar de Para leer después' : 'Guardar para leer después'}>
+                                    <Bookmark className={clsx('w-4 h-4', savedForLaterIds.has(`note-${n.id}`) && 'fill-current')} />
+                                  </button>
+                                )}
+                                {n.file_url && (n.status === 'published' || isSuperAdmin) && (
+                                  <button onClick={() => { recordView('note', n.id); openPreview(n.file_url, n.title); }} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
+                                    Ver documento <ExternalLink className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {(isPro || isSuperAdmin) && n.status === 'published' && (
+                                  <button onClick={() => downloadNoteAsPdf(n.id)} className="text-stone-600 text-sm font-medium flex items-center gap-1 hover:underline">
+                                    Descargar PDF
+                                  </button>
+                                )}
+                                {n.has_document && (n.status === 'published' || isSuperAdmin) && !isPro && !isSuperAdmin && (documentQuota === null || documentQuota.used < documentQuota.limit) && (
+                                  <button onClick={() => openDocumentByQuota('note', n.id, n.title)} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
+                                    Ver documento <ExternalLink className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {n.has_document && (n.status === 'published' || isSuperAdmin) && !isPro && !isSuperAdmin && documentQuota !== null && documentQuota.used >= documentQuota.limit && (
+                                  <Link to="/pricing" className="text-amber-600 text-sm font-medium flex items-center gap-1 hover:underline">Límite del mes usado. Ver planes para más</Link>
+                                )}
+                                {isSuperAdmin && (
+                                  <>
+                                    {n.status === 'pending' && (
+                                      <>
+                                        <button onClick={() => handleApproveNote(n.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Aprobar"><Check className="w-5 h-5" /></button>
+                                        <button onClick={() => handleRejectNote(n.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="Rechazar"><XCircle className="w-5 h-5" /></button>
+                                      </>
+                                    )}
+                                    <button onClick={() => handleDeleteNote(n.id)} className="p-2 text-stone-400 hover:bg-red-50 hover:text-red-600 rounded-lg" title="Eliminar"><Trash2 className="w-5 h-5" /></button>
+                                  </>
+                                )}
+                                {isSuperAdmin && n.status === 'pending' && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded">Pendiente</span>}
+                                {n.status === 'published' && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">Publicado</span>}
+                                {n.status === 'rejected' && <span className="text-xs bg-stone-100 text-stone-600 px-2 py-1 rounded">Rechazado</span>}
+                              </div>
+                              {isBasicOrAbove && n.status === 'published' && (
+                                <div className="w-full mt-3 pt-3 border-t border-stone-100">
+                                  {privateNoteEditing === `note-${n.id}` ? (
+                                    <div className="flex gap-2">
+                                      <textarea
+                                        value={privateNotes[`note-${n.id}`] ?? ''}
+                                        onChange={(e) => setPrivateNotes((prev) => ({ ...prev, [`note-${n.id}`]: e.target.value }))}
+                                        onBlur={(e) => { const v = e.target.value.trim(); savePrivateNote('note', n.id, v); setPrivateNoteEditing(null); }}
+                                        placeholder="Tu nota privada..."
+                                        className="flex-1 text-sm border border-stone-200 rounded-lg px-3 py-2 resize-none"
+                                        rows={2}
+                                        autoFocus
+                                      />
+                                      <button type="button" onClick={() => setPrivateNoteEditing(null)} className="text-stone-500 text-sm">Cerrar</button>
+                                    </div>
+                                  ) : (
+                                    <button type="button" onClick={() => openPrivateNoteEditor('note', n.id)} className="text-xs text-stone-500 hover:text-indigo-600 flex items-center gap-1">
+                                      <Pencil className="w-3 h-3" />
+                                      {privateNotes[`note-${n.id}`] ? `Mi nota: ${privateNotes[`note-${n.id}`].slice(0, 50)}${privateNotes[`note-${n.id}`].length > 50 ? '…' : ''}` : 'Agregar mi nota'}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
                       </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+                    ))}
+                  </div>
+                );
+              })()}
           </div>
         )}
 
@@ -735,85 +767,104 @@ export function SubjectDetail() {
                 <p>No hay exámenes aprobados para esta materia.</p>
                 {user && <p className="text-sm mt-2">Podés subir uno con el botón &quot;Subir examen&quot; (un admin lo revisará y, si lo aprueba, las vistas sumarán para tu tier).</p>}
               </div>
-            ) : (
-              <ul className="space-y-3">
-                {exams.map((ex: any) => (
-                  <li key={ex.id} className="bg-white p-5 rounded-2xl border border-stone-100 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-stone-900">{ex.title}</p>
-                      {ex.description && <p className="text-sm text-stone-500">{ex.description}</p>}
-                      <p className="text-xs text-stone-400">Subido por {ex.uploaded_by_name}{ex.year ? ` · ${ex.year}` : ''}{ex.university_name ? ` · ${ex.university_name}` : ''} · {(ex.views ?? 0)} vistas · {(ex.vote_count ?? 0)} votaciones</p>
+            ) : (() => {
+              const groupedExams = exams.reduce((acc: any, ex: any) => {
+                const uni = ex.university_name || 'General / Otras';
+                if (!acc[uni]) acc[uni] = [];
+                acc[uni].push(ex);
+                return acc;
+              }, {});
+
+              return (
+                <div className="space-y-8">
+                  {Object.entries(groupedExams).map(([uni, uniExams]: [string, any]) => (
+                    <div key={uni} className="space-y-4">
+                      <h3 className="text-lg font-bold text-stone-700 flex items-center gap-2 px-1">
+                        <School className="w-5 h-5 text-stone-400" />
+                        {uni}
+                      </h3>
+                      <ul className="space-y-3">
+                        {uniExams.map((ex: any) => (
+                          <li key={ex.id} className="bg-white p-5 rounded-2xl border border-stone-100 flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-stone-900">{ex.title}</p>
+                              {ex.description && <p className="text-sm text-stone-500">{ex.description}</p>}
+                              <p className="text-xs text-stone-400">Subido por {ex.uploaded_by_name}{ex.year ? ` · ${ex.year}` : ''} · {(ex.views ?? 0)} vistas · {(ex.vote_count ?? 0)} votaciones</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {ex.status === 'approved' && (
+                                <button onClick={() => handleVoteExam(ex.id)} className={clsx('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-medium transition', ex.user_voted ? 'bg-indigo-100 text-indigo-700' : 'bg-stone-100 text-stone-600 hover:bg-indigo-50 hover:text-indigo-600')} title="Me resultó útil">
+                                  <ThumbsUp className="w-4 h-4" /> Me resultó útil
+                                </button>
+                              )}
+                              {isBasicOrAbove && ex.status === 'approved' && (
+                                <button onClick={() => toggleSavedForLater('exam', ex.id)} className={clsx('p-2 rounded-lg transition-colors', savedForLaterIds.has(`exam-${ex.id}`) ? 'text-indigo-600 bg-indigo-50' : 'text-stone-400 hover:bg-stone-100 hover:text-indigo-600')} title={savedForLaterIds.has(`exam-${ex.id}`) ? 'Quitar de Para leer después' : 'Guardar para leer después'}>
+                                  <Bookmark className={clsx('w-4 h-4', savedForLaterIds.has(`exam-${ex.id}`) && 'fill-current')} />
+                                </button>
+                              )}
+                              {isSuperAdmin && (
+                                <>
+                                  {ex.status === 'pending' && (
+                                    <>
+                                      <button onClick={() => handleApproveExam(ex.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Aprobar"><Check className="w-5 h-5" /></button>
+                                      <button onClick={() => handleRejectExam(ex.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="Rechazar"><XCircle className="w-5 h-5" /></button>
+                                    </>
+                                  )}
+                                  <button onClick={() => handleDeleteExam(ex.id)} className="p-2 text-stone-400 hover:bg-red-50 hover:text-red-600 rounded-lg" title="Eliminar"><Trash2 className="w-5 h-5" /></button>
+                                </>
+                              )}
+                              {ex.status === 'pending' && !isSuperAdmin && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded">Pendiente de aprobación</span>}
+                              {ex.status === 'approved' && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">Aprobado</span>}
+                              {ex.file_url && (ex.status === 'approved' || isSuperAdmin) && (
+                                <>
+                                  <button onClick={() => { recordView('exam', ex.id); openPreview(ex.file_url, ex.title); }} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
+                                    Ver documento <ExternalLink className="w-4 h-4" />
+                                  </button>
+                                  {(isPro || isSuperAdmin) && (
+                                    <a href={ex.file_url} target="_blank" rel="noopener noreferrer" className="text-stone-600 text-sm font-medium hover:underline">Descargar PDF</a>
+                                  )}
+                                </>
+                              )}
+                              {ex.has_document && ex.status === 'approved' && !isPro && !isSuperAdmin && (documentQuota === null || documentQuota.used < documentQuota.limit) && (
+                                <button onClick={() => openDocumentByQuota('exam', ex.id, ex.title)} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
+                                  Ver documento <ExternalLink className="w-4 h-4" />
+                                </button>
+                              )}
+                              {ex.has_document && ex.status === 'approved' && !isPro && !isSuperAdmin && documentQuota !== null && documentQuota.used >= documentQuota.limit && (
+                                <Link to="/pricing" className="text-amber-600 text-sm font-medium flex items-center gap-1 hover:underline">Límite del mes usado. Ver planes para más</Link>
+                              )}
+                            </div>
+                            {isBasicOrAbove && ex.status === 'approved' && (
+                              <div className="w-full mt-3 pt-3 border-t border-stone-100">
+                                {privateNoteEditing === `exam-${ex.id}` ? (
+                                  <div className="flex gap-2">
+                                    <textarea
+                                      value={privateNotes[`exam-${ex.id}`] ?? ''}
+                                      onChange={(e) => setPrivateNotes((prev) => ({ ...prev, [`exam-${ex.id}`]: e.target.value }))}
+                                      onBlur={(e) => { const v = e.target.value.trim(); savePrivateNote('exam', ex.id, v); setPrivateNoteEditing(null); }}
+                                      placeholder="Tu nota privada..."
+                                      className="flex-1 text-sm border border-stone-200 rounded-lg px-3 py-2 resize-none"
+                                      rows={2}
+                                      autoFocus
+                                    />
+                                    <button type="button" onClick={() => setPrivateNoteEditing(null)} className="text-stone-500 text-sm">Cerrar</button>
+                                  </div>
+                                ) : (
+                                  <button type="button" onClick={() => openPrivateNoteEditor('exam', ex.id)} className="text-xs text-stone-500 hover:text-indigo-600 flex items-center gap-1">
+                                    <Pencil className="w-3 h-3" />
+                                    {privateNotes[`exam-${ex.id}`] ? `Mi nota: ${privateNotes[`exam-${ex.id}`].slice(0, 50)}${privateNotes[`exam-${ex.id}`].length > 50 ? '…' : ''}` : 'Agregar mi nota'}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {ex.status === 'approved' && (
-                        <button onClick={() => handleVoteExam(ex.id)} className={clsx('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-medium transition', ex.user_voted ? 'bg-indigo-100 text-indigo-700' : 'bg-stone-100 text-stone-600 hover:bg-indigo-50 hover:text-indigo-600')} title="Me resultó útil">
-                          <ThumbsUp className="w-4 h-4" /> Me resultó útil
-                        </button>
-                      )}
-                      {isBasicOrAbove && ex.status === 'approved' && (
-                        <button onClick={() => toggleSavedForLater('exam', ex.id)} className={clsx('p-2 rounded-lg transition-colors', savedForLaterIds.has(`exam-${ex.id}`) ? 'text-indigo-600 bg-indigo-50' : 'text-stone-400 hover:bg-stone-100 hover:text-indigo-600')} title={savedForLaterIds.has(`exam-${ex.id}`) ? 'Quitar de Para leer después' : 'Guardar para leer después'}>
-                          <Bookmark className={clsx('w-4 h-4', savedForLaterIds.has(`exam-${ex.id}`) && 'fill-current')} />
-                        </button>
-                      )}
-                      {isSuperAdmin && (
-                        <>
-                          {ex.status === 'pending' && (
-                            <>
-                              <button onClick={() => handleApproveExam(ex.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Aprobar"><Check className="w-5 h-5" /></button>
-                              <button onClick={() => handleRejectExam(ex.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="Rechazar"><XCircle className="w-5 h-5" /></button>
-                            </>
-                          )}
-                          <button onClick={() => handleDeleteExam(ex.id)} className="p-2 text-stone-400 hover:bg-red-50 hover:text-red-600 rounded-lg" title="Eliminar"><Trash2 className="w-5 h-5" /></button>
-                        </>
-                      )}
-                      {ex.status === 'pending' && !isSuperAdmin && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded">Pendiente de aprobación</span>}
-                      {ex.status === 'approved' && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">Aprobado</span>}
-                      {ex.file_url && (ex.status === 'approved' || isSuperAdmin) && (
-                        <>
-                          <button onClick={() => { recordView('exam', ex.id); openPreview(ex.file_url, ex.title); }} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
-                            Ver documento <ExternalLink className="w-4 h-4" />
-                          </button>
-                          {(isPro || isSuperAdmin) && (
-                            <a href={ex.file_url} target="_blank" rel="noopener noreferrer" className="text-stone-600 text-sm font-medium hover:underline">Descargar PDF</a>
-                          )}
-                        </>
-                      )}
-                      {ex.has_document && ex.status === 'approved' && !isPro && !isSuperAdmin && (documentQuota === null || documentQuota.used < documentQuota.limit) && (
-                        <button onClick={() => openDocumentByQuota('exam', ex.id, ex.title)} className="text-indigo-600 text-sm font-medium flex items-center gap-1 hover:underline">
-                          Ver documento <ExternalLink className="w-4 h-4" />
-                        </button>
-                      )}
-                      {ex.has_document && ex.status === 'approved' && !isPro && !isSuperAdmin && documentQuota !== null && documentQuota.used >= documentQuota.limit && (
-                        <Link to="/pricing" className="text-amber-600 text-sm font-medium flex items-center gap-1 hover:underline">Límite del mes usado. Ver planes para más</Link>
-                      )}
-                    </div>
-                    {isBasicOrAbove && ex.status === 'approved' && (
-                      <div className="w-full mt-3 pt-3 border-t border-stone-100">
-                        {privateNoteEditing === `exam-${ex.id}` ? (
-                          <div className="flex gap-2">
-                            <textarea
-                              value={privateNotes[`exam-${ex.id}`] ?? ''}
-                              onChange={(e) => setPrivateNotes((prev) => ({ ...prev, [`exam-${ex.id}`]: e.target.value }))}
-                              onBlur={(e) => { const v = e.target.value.trim(); savePrivateNote('exam', ex.id, v); setPrivateNoteEditing(null); }}
-                              placeholder="Tu nota privada..."
-                              className="flex-1 text-sm border border-stone-200 rounded-lg px-3 py-2 resize-none"
-                              rows={2}
-                              autoFocus
-                            />
-                            <button type="button" onClick={() => setPrivateNoteEditing(null)} className="text-stone-500 text-sm">Cerrar</button>
-                          </div>
-                        ) : (
-                          <button type="button" onClick={() => openPrivateNoteEditor('exam', ex.id)} className="text-xs text-stone-500 hover:text-indigo-600 flex items-center gap-1">
-                            <Pencil className="w-3 h-3" />
-                            {privateNotes[`exam-${ex.id}`] ? `Mi nota: ${privateNotes[`exam-${ex.id}`].slice(0, 50)}${privateNotes[`exam-${ex.id}`].length > 50 ? '…' : ''}` : 'Agregar mi nota'}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -950,7 +1001,7 @@ export function SubjectDetail() {
 
       {/* Modal preview Drive */}
       {previewModal.open && (
-        <div className="fixed inset-0 z-[60] flex flex-col bg-black/90 p-4" onClick={() => setPreviewModal((p) => ({ ...p, open: false }))}>
+        <div className="fixed inset-0 z-[60] flex flex-col bg-black/90 p-0" onClick={() => setPreviewModal((p) => ({ ...p, open: false }))}>
           <div className="flex items-center justify-between mb-2 shrink-0">
             <h3 className="text-white font-semibold truncate pr-4">{previewModal.title}</h3>
             <button type="button" onClick={() => setPreviewModal((p) => ({ ...p, open: false }))} className="p-2 text-white hover:bg-white/10 rounded-lg shrink-0">

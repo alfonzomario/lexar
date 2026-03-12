@@ -112,7 +112,7 @@ export function Layout() {
             <div className="bg-indigo-100 p-1.5 rounded-lg group-hover:bg-indigo-600 transition-colors">
               <Scale className="w-6 h-6 text-indigo-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="text-xl font-bold tracking-tight text-stone-900">LexAR</span>
+            <span className="text-xl font-bold tracking-tight text-stone-900">LexARG</span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -413,7 +413,7 @@ export function Layout() {
                 </button>
               </div>
               <p className="text-sm text-stone-500 mb-4">
-                Ingresá el email con el que estás registrado en LexAR (demo: juan@uba.ar, admin@lexar.ar).
+                Ingresá el email con el que estás registrado en LexARG (demo: juan@uba.ar, admin@lexar.ar).
               </p>
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
@@ -461,7 +461,7 @@ export function Layout() {
           <div>
             <div className="flex items-center gap-2 justify-center md:justify-start mb-4">
               <Scale className="w-6 h-6 text-indigo-600" />
-              <span className="text-xl font-bold tracking-tight text-stone-900">LexAR</span>
+              <span className="text-xl font-bold tracking-tight text-stone-900">LexARG</span>
             </div>
             <p className="text-sm text-stone-500 max-w-xs mx-auto md:mx-0">
               La plataforma integral para estudiantes y profesionales del Derecho en Argentina.
@@ -478,7 +478,7 @@ export function Layout() {
         </div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center pt-8 border-t border-stone-100">
           <p className="text-sm text-stone-500 mb-2">
-            &copy; {new Date().getFullYear()} LexAR. Todos los derechos reservados.
+            &copy; {new Date().getFullYear()} LexARG. Todos los derechos reservados.
           </p>
           <p className="text-xs text-stone-400 max-w-2xl mx-auto">
             Esta plataforma tiene fines informativos y educativos. No constituye asesoramiento legal, ni reemplaza el consejo de un profesional matriculado.

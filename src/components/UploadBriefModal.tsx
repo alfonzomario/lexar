@@ -23,6 +23,11 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
     const [relevance, setRelevance] = useState('');
     const [keywords, setKeywords] = useState('');
     const [subjectId, setSubjectId] = useState('');
+    const [court, setCourt] = useState('');
+    const [year, setYear] = useState('');
+    const [parties, setParties] = useState('');
+    const [timelineStr, setTimelineStr] = useState('');
+    const [citationsStr, setCitationsStr] = useState('');
 
     const [subjects, setSubjects] = useState<any[]>([]);
     const [isSaving, setIsSaving] = useState(false);
@@ -34,7 +39,8 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             setRawText('');
             setTitle(''); setFacts(''); setIssue(''); setRule('');
             setReasoning(''); setHolding(''); setRelevance(''); setKeywords('');
-            setSubjectId('');
+            setSubjectId(''); setCourt(''); setYear(''); setParties('');
+            setTimelineStr('[]'); setCitationsStr('[]');
         }
     }, [isOpen]);
 
@@ -50,55 +56,89 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             });
             const data = await res.json();
 
-            // Keep the user's title if they already typed one, or use a default
-            setTitle(prev => prev || 'Nuevo Documento Analizado');
-            setFacts(rawText); // The user requested the full text they pasted to go here
+            // AI now extracts the title too
+            setTitle(data.title || 'Nuevo Fallo Analizado');
+            // The full original text is ALWAYS stored verbatim - never replaced by AI summary
+            setFacts(rawText);
             setIssue(data.issue || '');
             setRule(data.rule || '');
             setReasoning(data.reasoning || '');
             setHolding(data.holding || '');
             setRelevance(data.relevance || '');
             setKeywords(data.keywords || '');
+            setCourt(data.court || '');
+            setYear(data.year ? String(data.year) : '');
+            setParties(data.parties || '');
+            setTimelineStr(JSON.stringify(data.timeline || [], null, 2));
+            setCitationsStr(JSON.stringify(data.citations || [], null, 2));
 
             setStep('review');
         } catch (error) {
             console.error('Error parsing text', error);
-            setStep('input'); // fallback
+            setStep('input');
         }
     };
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+        if (file.type !== 'application/pdf') {
+            alert('Solo se aceptan archivos PDF.');
+            return;
+        }
 
-        // Simulate PDF text extraction
         setStep('analyzing');
-        setTimeout(() => {
-            // Fake extracted text that will then be sent to handleAnalyze
-            const fakeExtractedText = "TEXTO EXTRAÍDO DEL ARCHIVO PDF:\nEl actor interpuso demanda solicitando la inconstitucionalidad de la norma. El demandado opuso excepciones alegando falta de legitimación. Los derechos consagrados en la Constitución no son absolutos, pero su reglamentación mediante leyes no puede alterar su sustancia (Art. 28 CN). El tribunal consideró que los hechos probados demuestran una afectación directa e irrazonable al núcleo del derecho de propiedad del actor, sin que exista una justificación o interés estatal superior válido en este caso. Se hace lugar a la demanda, revocando la sentencia de cámara, y se declara la inconstitucionalidad de la norma para este caso concreto.";
-            setRawText(fakeExtractedText);
 
-            // We need to trigger the analysis immediately after fake extraction
-            // Since handleAnalyze uses state, we pass the text directly
-            fetch('/api/briefs/ai-parse', {
+        try {
+            // Step 1: Extract raw text from PDF
+            const formData = new FormData();
+            formData.append('pdf', file);
+            const pdfRes = await fetch('/api/briefs/parse-pdf', {
+                method: 'POST',
+                body: formData,
+            });
+            if (!pdfRes.ok) {
+                const err = await pdfRes.json();
+                alert(err.error || 'No se pudo leer el PDF.');
+                setStep('input');
+                return;
+            }
+            const { text } = await pdfRes.json();
+            setRawText(text);
+
+            // Step 2: Send extracted text to AI for structured analysis
+            const aiRes = await fetch('/api/briefs/ai-parse', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: fakeExtractedText })
-            }).then(res => res.json()).then(data => {
-                setTitle(prev => prev || 'Fallo Extraído de PDF');
-                setFacts(fakeExtractedText);
-                setIssue(data.issue || '');
-                setRule(data.rule || '');
-                setReasoning(data.reasoning || '');
-                setHolding(data.holding || '');
-                setRelevance(data.relevance || '');
-                setKeywords(data.keywords || '');
-                setStep('review');
-            }).catch(() => {
-                setStep('input');
+                body: JSON.stringify({ text }),
             });
+            if (!aiRes.ok) {
+                alert('Error al analizar el fallo con IA.');
+                setStep('input');
+                return;
+            }
+            const data = await aiRes.json();
 
-        }, 1500);
+            // AI now extracts the title. Full verbatim text always stored as facts.
+            setTitle(data.title || file.name.replace('.pdf', ''));
+            setFacts(text);
+            setIssue(data.issue || '');
+            setRule(data.rule || '');
+            setReasoning(data.reasoning || '');
+            setHolding(data.holding || '');
+            setRelevance(data.relevance || '');
+            setKeywords(data.keywords || '');
+            setCourt(data.court || '');
+            setYear(data.year ? String(data.year) : '');
+            setParties(data.parties || '');
+            setTimelineStr(JSON.stringify(data.timeline || [], null, 2));
+            setCitationsStr(JSON.stringify(data.citations || [], null, 2));
+            setStep('review');
+        } catch (err) {
+            console.error('File upload error:', err);
+            alert('Ocurrió un error inesperado al procesar el PDF.');
+            setStep('input');
+        }
     };
 
     const handleSave = async (e: React.FormEvent) => {
@@ -106,12 +146,24 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
         if (!title || !subjectId) return;
         setIsSaving(true);
 
+        let timelineParsed = [];
+        let citationsParsed = [];
+        try {
+            if (timelineStr) timelineParsed = JSON.parse(timelineStr);
+            if (citationsStr) citationsParsed = JSON.parse(citationsStr);
+        } catch (e) {
+            alert('Formato JSON inválido en la línea de tiempo o las normas citadas.');
+            setIsSaving(false);
+            return;
+        }
+
         try {
             const res = await fetch('/api/briefs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id: subjectId
+                    title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id: subjectId,
+                    court, year, parties, timeline: timelineParsed, citations: citationsParsed
                 })
             });
             if (res.ok) {
@@ -152,7 +204,7 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
                                 <div className="space-y-4">
                                     <div className="flex items-center justify-between mb-2">
                                         <p className="text-stone-600 text-sm flex-1">
-                                            Pegá el texto bruto de la sentencia aquí o subí un archivo PDF. LexAR estructurará el fallo automáticamente.
+                                            Pegá el texto bruto de la sentencia aquí o subí un archivo PDF. LexARG estructurará el fallo automáticamente.
                                         </p>
                                         <input
                                             type="file"
@@ -243,6 +295,30 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
                                     <div>
                                         <label className="block text-sm font-bold text-stone-700 mb-1">Keywords (separadas por coma)</label>
                                         <input type="text" value={keywords} onChange={e => setKeywords(e.target.value)} className="w-full p-3 rounded-xl border border-stone-200 outline-none" />
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-stone-700 mb-1">Tribunal</label>
+                                            <input type="text" value={court} onChange={e => setCourt(e.target.value)} className="w-full p-3 rounded-xl border border-stone-200 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-stone-700 mb-1">Año</label>
+                                            <input type="number" value={year} onChange={e => setYear(e.target.value)} className="w-full p-3 rounded-xl border border-stone-200 outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-stone-700 mb-1">Partes</label>
+                                            <input type="text" value={parties} onChange={e => setParties(e.target.value)} className="w-full p-3 rounded-xl border border-stone-200 outline-none" />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-stone-700 mb-1">Línea de Tiempo (JSON)</label>
+                                            <textarea value={timelineStr} onChange={e => setTimelineStr(e.target.value)} className="w-full h-32 p-3 rounded-xl border border-stone-200 outline-none resize-y font-mono text-xs text-stone-600" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-stone-700 mb-1">Normativa Citada (JSON)</label>
+                                            <textarea value={citationsStr} onChange={e => setCitationsStr(e.target.value)} className="w-full h-32 p-3 rounded-xl border border-stone-200 outline-none resize-y font-mono text-xs text-stone-600" />
+                                        </div>
                                     </div>
                                 </div>
 

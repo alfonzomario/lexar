@@ -35,6 +35,9 @@ function initDb() {
     CREATE TABLE IF NOT EXISTS case_briefs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
+      court TEXT,
+      year INTEGER,
+      parties TEXT,
       facts TEXT,
       issue TEXT,
       rule TEXT,
@@ -42,6 +45,8 @@ function initDb() {
       holding TEXT,
       relevance TEXT,
       keywords TEXT,
+      timeline TEXT,
+      citations TEXT,
       is_demo BOOLEAN DEFAULT 1,
       subject_id INTEGER -- Legacy column, kept for backward compatibility during migration
     );
@@ -147,7 +152,22 @@ function initDb() {
     CREATE TABLE IF NOT EXISTS universities (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      description TEXT
+      description TEXT,
+      city TEXT,
+      province TEXT,
+      type TEXT DEFAULT 'Pública',
+      program_url TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS study_plans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      university_id INTEGER,
+      subject_id INTEGER,
+      year INTEGER,
+      semester INTEGER,
+      category TEXT,
+      FOREIGN KEY (university_id) REFERENCES universities(id),
+      FOREIGN KEY (subject_id) REFERENCES subjects(id)
     );
 
     CREATE TABLE IF NOT EXISTS chairs (
@@ -395,6 +415,18 @@ function initDb() {
     console.log('Migrated case_briefs subjects to many-to-many relationship.');
   }
 
+  // Migration: add new fields for case_briefs (court, year, parties, timeline, citations)
+  try {
+    db.prepare('SELECT court FROM case_briefs LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE case_briefs ADD COLUMN court TEXT");
+    db.exec("ALTER TABLE case_briefs ADD COLUMN year INTEGER");
+    db.exec("ALTER TABLE case_briefs ADD COLUMN parties TEXT");
+    db.exec("ALTER TABLE case_briefs ADD COLUMN timeline TEXT");
+    db.exec("ALTER TABLE case_briefs ADD COLUMN citations TEXT");
+    console.log('Added court, year, parties, timeline, citations columns to case_briefs.');
+  }
+
   // Seed data if empty
   const subjectCount = db.prepare('SELECT COUNT(*) as count FROM subjects').get() as { count: number };
   if (subjectCount.count === 0) {
@@ -453,28 +485,65 @@ function seedDb() {
   const insertSubject = db.prepare('INSERT INTO subjects (name, description, icon) VALUES (?, ?, ?)');
   const s1 = insertSubject.run('Derecho Constitucional', 'Estudio de la Constitución Nacional y derechos fundamentales.', 'BookOpen');
   const s2 = insertSubject.run('Derecho Civil (Obligaciones)', 'Teoría general de las obligaciones y responsabilidad civil.', 'Scale');
+  const s3 = insertSubject.run('Teoría General del Derecho', 'Principios fundamentales y filosofía del derecho.', 'BookOpen');
+  const s4 = insertSubject.run('Derecho Penal I', 'Teoría del delito y principios del derecho penal.', 'Scale');
+  const s5 = insertSubject.run('Instituciones de Derecho Civil', 'Parte general: persona, bienes y hechos jurídicos.', 'BookOpen');
+  const s6 = insertSubject.run('Teoría General del Proceso', 'Principios procesales y organización judicial.', 'Scale');
+  const s7 = insertSubject.run('Derechos Humanos', 'Sistemas de protección nacional e internacional.', 'BookOpen');
+  const s8 = insertSubject.run('Derecho Administrativo', 'Régimen jurídico de la administración pública.', 'Scale');
+  const s9 = insertSubject.run('Derecho de Contratos', 'Teoría general y contratos en particular.', 'Scale');
+  const s10 = insertSubject.run('Derecho de Familia y Sucesiones', 'Relaciones jurídicas familiares y transmisión hereditaria.', 'Scale');
+  const s11 = insertSubject.run('Derecho del Trabajo y la Seguridad Social', 'Relaciones laborales individuales y colectivas.', 'Scale');
+  const s12 = insertSubject.run('Sociedades Civiles y Comerciales', 'Régimen de personas jurídicas societarias.', 'Scale');
+
+
 
   // Case Briefs
-  const insertBrief = db.prepare('INSERT INTO case_briefs (title, facts, issue, rule, reasoning, holding, relevance, keywords) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const insertBrief = db.prepare('INSERT INTO case_briefs (title, court, year, parties, facts, issue, rule, reasoning, holding, relevance, keywords, timeline, citations) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const b1 = insertBrief.run(
     'Siri, Ángel s/ recurso de hábeas corpus (1957)',
+    'Corte Suprema de Justicia de la Nación',
+    1957,
+    'Siri, Ángel vs Policía de la Provincia de Buenos Aires',
     'Ángel Siri, director del diario "Mercedes", vio clausurado su periódico por orden de una autoridad policial sin justificación legal. Interpuso hábeas corpus.',
     '¿Procede el hábeas corpus para proteger derechos constitucionales distintos de la libertad física (en este caso, libertad de imprenta y trabajo)?',
     'Creación pretoriana de la acción de amparo para proteger derechos fundamentales no amparados por el hábeas corpus.',
     'La Corte sostuvo que las garantías constitucionales existen y protegen a los individuos por el solo hecho de estar consagradas en la Constitución. Los jueces deben arbitrar los medios para protegerlas, incluso si no hay una ley reglamentaria específica.',
     'Se revoca la sentencia apelada y se hace lugar a la acción, ordenando el cese de la restricción.',
     'Fallo fundacional del amparo en Argentina, marcando la operatividad de los derechos constitucionales.',
-    'Amparo, Operatividad, Libertad de Imprenta'
+    'Amparo, Operatividad, Libertad de Imprenta',
+    JSON.stringify([
+      { date: '1956', description: 'Clausura del diario "Mercedes".' },
+      { date: '1956', description: 'Interposición del recurso por Ángel Siri.' },
+      { date: '1956', description: 'Rechazo del recurso en instancias previas.' },
+      { date: '1957', description: 'Fallo de la CSJN revocando sentencia.' }
+    ]),
+    JSON.stringify([
+      { norm_name: 'Constitución Nacional (Art. 14)', considerando_ref: 'Considerando 5' }
+    ])
   );
   const b2 = insertBrief.run(
     'Kot, Samuel s/ recurso de hábeas corpus (1958)',
+    'Corte Suprema de Justicia de la Nación',
+    1958,
+    'Kot, Samuel vs Trabajadores en huelga',
     'Samuel Kot sufrió la ocupación de su fábrica por parte de trabajadores en huelga. Interpuso acción de amparo.',
     '¿Procede el amparo contra actos de particulares (no solo del Estado)?',
     'El amparo procede también contra actos de particulares que restrinjan derechos constitucionales.',
     'La Corte amplió la doctrina de Siri, estableciendo que la Constitución protege al individuo tanto frente al Estado como frente a otros particulares que ejerzan poder o fuerza de manera ilegítima.',
     'Se hace lugar al amparo y se ordena la desocupación de la fábrica.',
     'Extensión del amparo contra actos de particulares.',
-    'Amparo contra particulares, Propiedad, Huelga'
+    'Amparo contra particulares, Propiedad, Huelga',
+    JSON.stringify([
+      { date: '1958', description: 'Ocupación de la fábrica textil de Samuel Kot.' },
+      { date: '1958', description: 'Interposición del amparo contra los ocupantes.' },
+      { date: '1958', description: 'Rechazo inicial por tratarse de particulares.' },
+      { date: '1958', description: 'Fallo de la CSJN admitiendo el amparo.' }
+    ]),
+    JSON.stringify([
+      { norm_name: 'Constitución Nacional (Art. 14 y 17)', considerando_ref: 'Considerando 2 y 3' },
+      { norm_name: 'Caso Siri (Fallos: 239:459)', considerando_ref: 'Considerando 4' }
+    ])
   );
 
   const insertBriefSubject = db.prepare('INSERT INTO case_brief_subjects (case_brief_id, subject_id) VALUES (?, ?)');
@@ -502,17 +571,108 @@ function seedDb() {
   insertJob.run('Paralegal / Procurador', 'Estudio Marval O\'Farrell Mairal', 'CABA', 'Part-time', 'Búsqueda de estudiante avanzado para procuración en fuero comercial.', '2026-02-26');
   insertJob.run('Abogado Junior Corporativo', 'Pérez Alati, Grondona, Benites', 'CABA', 'Full-time', 'Se busca abogado recién recibido para el área de M&A.', '2026-02-24');
 
-  // Universities & Chairs
-  const insertUni = db.prepare('INSERT INTO universities (name, description) VALUES (?, ?)');
-  const uni1 = insertUni.run('Universidad de Buenos Aires (UBA)', 'Facultad de Derecho UBA');
+  // Universities & Chairs — All Argentine universities with law schools
+  const insertUni = db.prepare('INSERT INTO universities (name, description, city, province, type, program_url) VALUES (?, ?, ?, ?, ?, ?)');
 
+  // === UNIVERSIDADES PÚBLICAS ===
+  const uni1 = insertUni.run('Universidad de Buenos Aires (UBA)', 'Facultad de Derecho', 'CABA', 'CABA', 'Pública', 'http://www.derecho.uba.ar/academica/plan-de-estudios.php');
+  insertUni.run('Universidad Nacional de Córdoba (UNC)', 'Facultad de Derecho y Ciencias Sociales', 'Córdoba', 'Córdoba', 'Pública', 'https://www.derecho.unc.edu.ar/plan-de-estudios/');
+  insertUni.run('Universidad Nacional de La Plata (UNLP)', 'Facultad de Ciencias Jurídicas y Sociales', 'La Plata', 'Buenos Aires', 'Pública', 'https://www.jursoc.unlp.edu.ar/plan-de-estudios');
+  insertUni.run('Universidad Nacional de Rosario (UNR)', 'Facultad de Derecho', 'Rosario', 'Santa Fe', 'Pública', 'https://www.fder.unr.edu.ar/plan-de-estudios/');
+  insertUni.run('Universidad Nacional del Litoral (UNL)', 'Facultad de Ciencias Jurídicas y Sociales', 'Santa Fe', 'Santa Fe', 'Pública', 'https://www.fcjs.unl.edu.ar/');
+  insertUni.run('Universidad Nacional de Tucumán (UNT)', 'Facultad de Derecho y Ciencias Sociales', 'San Miguel de Tucumán', 'Tucumán', 'Pública', 'https://www.derecho.unt.edu.ar/');
+  insertUni.run('Universidad Nacional de Cuyo (UNCuyo)', 'Facultad de Derecho', 'Mendoza', 'Mendoza', 'Pública', 'https://fder.uncuyo.edu.ar/');
+  insertUni.run('Universidad Nacional del Nordeste (UNNE)', 'Facultad de Derecho y Ciencias Sociales y Políticas', 'Corrientes', 'Corrientes', 'Pública', 'https://derecho.unne.edu.ar/');
+  insertUni.run('Universidad Nacional de Mar del Plata (UNMDP)', 'Facultad de Derecho', 'Mar del Plata', 'Buenos Aires', 'Pública', 'https://www.mdp.edu.ar/derecho/');
+  insertUni.run('Universidad Nacional del Sur (UNS)', 'Departamento de Derecho', 'Bahía Blanca', 'Buenos Aires', 'Pública', 'https://www.uns.edu.ar/');
+  insertUni.run('Universidad Nacional de Santiago del Estero (UNSE)', 'Facultad de Humanidades, Cs. Sociales y de la Salud - Abogacía', 'Santiago del Estero', 'Santiago del Estero', 'Pública', 'https://fhu.unse.edu.ar/');
+  insertUni.run('Universidad Nacional de San Juan (UNSJ)', 'Facultad de Ciencias Sociales - Abogacía', 'San Juan', 'San Juan', 'Pública', 'http://www.facso.unsj.edu.ar/');
+  insertUni.run('Universidad Nacional del Centro (UNICEN)', 'Facultad de Derecho', 'Azul', 'Buenos Aires', 'Pública', 'https://www.der.unicen.edu.ar/');
+  insertUni.run('Universidad Nacional de La Pampa (UNLPam)', 'Facultad de Ciencias Económicas y Jurídicas', 'Santa Rosa', 'La Pampa', 'Pública', 'https://www.unlpam.edu.ar/');
+  insertUni.run('Universidad Nacional de Lomas de Zamora (UNLZ)', 'Facultad de Derecho', 'Lomas de Zamora', 'Buenos Aires', 'Pública', 'https://www.derecho.unlz.edu.ar/');
+  insertUni.run('Universidad Nacional del Noroeste (UNNOBA)', 'Escuela de Ciencias Jurídicas y Sociales', 'Junín', 'Buenos Aires', 'Pública', 'https://www.unnoba.edu.ar/');
+  insertUni.run('Universidad Nacional de La Matanza (UNLaM)', 'Departamento de Derecho y Ciencia Política', 'San Justo', 'Buenos Aires', 'Pública', 'https://derecho.unlam.edu.ar/');
+  insertUni.run('Universidad Nacional de Catamarca (UNCa)', 'Facultad de Derecho', 'San Fernando del Valle de Catamarca', 'Catamarca', 'Pública', 'https://www.unca.edu.ar/');
+  insertUni.run('Universidad Nacional de Entre Ríos (UNER)', 'Facultad de Ciencias de la Gestión - Abogacía', 'Paraná', 'Entre Ríos', 'Pública', 'https://fcg.uner.edu.ar/');
+  insertUni.run('Universidad Nacional del Comahue (UNCo)', 'Facultad de Derecho y Ciencias Sociales', 'General Roca', 'Río Negro', 'Pública', 'https://fadecs.uncoma.edu.ar/');
+  insertUni.run('Universidad Nacional de la Patagonia SJB (UNPSJB)', 'Facultad de Ciencias Jurídicas', 'Comodoro Rivadavia', 'Chubut', 'Pública', 'https://www.unp.edu.ar/');
+  insertUni.run('Universidad Nacional de la Patagonia Austral (UNPA)', 'Unidad Académica de Ciencias Sociales - Abogacía', 'Río Gallegos', 'Santa Cruz', 'Pública', 'https://www.unpa.edu.ar/');
+  insertUni.run('Universidad Nacional de Salta (UNSa)', 'Escuela de Derecho - Facultad de Humanidades', 'Salta', 'Salta', 'Pública', 'https://hum.unsa.edu.ar/');
+  insertUni.run('Universidad Nacional de San Luis (UNSL)', 'Facultad de Ciencias Jurídicas - Abogacía', 'San Luis', 'San Luis', 'Pública', 'http://www.unsl.edu.ar/');
+  insertUni.run('Universidad Nacional de Jujuy (UNJu)', 'Facultad de Humanidades y Cs. Sociales - Abogacía', 'San Salvador de Jujuy', 'Jujuy', 'Pública', 'http://www.fhycs.unju.edu.ar/');
+  insertUni.run('Universidad Nacional de Misiones (UNaM)', 'Facultad de Derecho, Ciencias Sociales y Políticas', 'Posadas', 'Misiones', 'Pública', null);
+  insertUni.run('Universidad Nacional de Formosa (UNaF)', 'Facultad de Humanidades - Abogacía', 'Formosa', 'Formosa', 'Pública', null);
+  insertUni.run('Universidad Nacional de La Rioja (UNLaR)', 'Departamento de Ciencias Sociales, Jurídicas y Económicas', 'La Rioja', 'La Rioja', 'Pública', null);
+  insertUni.run('Universidad Nacional de Avellaneda (UNDAV)', 'Departamento de Gobierno y Justicia - Abogacía', 'Avellaneda', 'Buenos Aires', 'Pública', 'https://undav.edu.ar/');
+  insertUni.run('Universidad Nacional de José C. Paz (UNPAZ)', 'Departamento de Ciencias Jurídicas y Sociales', 'José C. Paz', 'Buenos Aires', 'Pública', 'https://www.unpaz.edu.ar/');
+  insertUni.run('Universidad Nacional del Chaco Austral (UNCAUS)', 'Facultad de Ciencias Jurídicas y Políticas', 'Presidencia Roque Sáenz Peña', 'Chaco', 'Pública', null);
+  insertUni.run('Universidad Nacional de Moreno (UNM)', 'Departamento de Humanidades y Ciencias Sociales - Abogacía', 'Moreno', 'Buenos Aires', 'Pública', 'https://www.unm.edu.ar/');
+  insertUni.run('Universidad Nacional Arturo Jauretche (UNAJ)', 'Instituto de Ciencias Sociales y Administración - Abogacía', 'Florencio Varela', 'Buenos Aires', 'Pública', 'https://www.unaj.edu.ar/');
+  insertUni.run('Universidad Nacional de Tierra del Fuego (UNTDF)', 'Instituto de Ciencias Sociales - Abogacía', 'Ushuaia', 'Tierra del Fuego', 'Pública', 'https://www.untdf.edu.ar/');
+  insertUni.run('Universidad Nacional de Hurlingham (UNAHUR)', 'Instituto de Justicia y Derecho', 'Villa Tesei', 'Buenos Aires', 'Pública', 'https://unahur.edu.ar/');
+  insertUni.run('Universidad Nacional de Río Negro (UNRN)', 'Escuela de Derecho', 'Viedma', 'Río Negro', 'Pública', 'https://www.unrn.edu.ar/');
+
+  // === UNIVERSIDADES PRIVADAS ===
+  insertUni.run('Universidad Católica Argentina (UCA)', 'Facultad de Derecho', 'CABA', 'CABA', 'Privada', 'https://uca.edu.ar/es/facultad-de-derecho');
+  insertUni.run('Universidad Austral (UA)', 'Facultad de Derecho', 'Pilar', 'Buenos Aires', 'Privada', 'https://www.austral.edu.ar/derecho/');
+  insertUni.run('Universidad Torcuato Di Tella (UTDT)', 'Escuela de Derecho', 'CABA', 'CABA', 'Privada', 'https://www.utdt.edu/listado_contenidos.php?id_item_menu=25164');
+  insertUni.run('Universidad de San Andrés (UdeSA)', 'Departamento de Derecho', 'Victoria', 'Buenos Aires', 'Privada', 'https://udesa.edu.ar/departamento-de-derecho');
+  insertUni.run('Universidad de Palermo (UP)', 'Facultad de Derecho', 'CABA', 'CABA', 'Privada', 'https://www.palermo.edu/derecho/');
+  insertUni.run('Universidad del Salvador (USAL)', 'Facultad de Ciencias Jurídicas', 'CABA', 'CABA', 'Privada', 'https://fcj.usal.edu.ar/');
+  insertUni.run('Universidad de Belgrano (UB)', 'Facultad de Derecho y Ciencias Sociales', 'CABA', 'CABA', 'Privada', 'https://www.ub.edu.ar/facultad-de-derecho-y-ciencias-sociales');
+  insertUni.run('Universidad Argentina de la Empresa (UADE)', 'Facultad de Ciencias Jurídicas y Sociales', 'CABA', 'CABA', 'Privada', 'https://www.uade.edu.ar/');
+  insertUni.run('Universidad Argentina John F. Kennedy (UK)', 'Facultad de Derecho', 'CABA', 'CABA', 'Privada', 'https://www.kennedy.edu.ar/');
+  insertUni.run('Universidad de Morón (UM)', 'Facultad de Derecho, Ciencias Políticas y Sociales', 'Morón', 'Buenos Aires', 'Privada', 'https://www.unimoron.edu.ar/');
+  insertUni.run('Universidad del Norte Santo Tomás de Aquino (UNSTA)', 'Facultad de Derecho y Ciencias Políticas', 'San Miguel de Tucumán', 'Tucumán', 'Privada', 'https://www.unsta.edu.ar/');
+  insertUni.run('Universidad Católica de Córdoba (UCC)', 'Facultad de Derecho y Ciencias Sociales', 'Córdoba', 'Córdoba', 'Privada', 'https://www.ucc.edu.ar/facultades/derecho/');
+  insertUni.run('Universidad Católica de La Plata (UCALP)', 'Facultad de Derecho y Ciencias Políticas', 'La Plata', 'Buenos Aires', 'Privada', 'https://www.ucalp.edu.ar/');
+  insertUni.run('Universidad Católica de Santa Fe (UCSF)', 'Facultad de Derecho y Ciencia Política', 'Santa Fe', 'Santa Fe', 'Privada', 'https://www.ucsf.edu.ar/');
+  insertUni.run('Universidad Católica de Santiago del Estero (UCSE)', 'Departamento de Ciencias Jurídicas y Sociales', 'Santiago del Estero', 'Santiago del Estero', 'Privada', 'https://www.ucse.edu.ar/');
+  insertUni.run('Universidad Católica de Cuyo (UCCuyo)', 'Facultad de Derecho y Ciencias Sociales', 'San Juan', 'San Juan', 'Privada', 'https://www.uccuyo.edu.ar/');
+  insertUni.run('Universidad Católica de Salta (UCASAL)', 'Facultad de Ciencias Jurídicas', 'Salta', 'Salta', 'Privada', 'https://www.ucasal.edu.ar/');
+  insertUni.run('Universidad de Ciencias Empresariales y Sociales (UCES)', 'Facultad de Ciencias Jurídicas y Políticas', 'CABA', 'CABA', 'Privada', 'https://www.uces.edu.ar/');
+  insertUni.run('Universidad Abierta Interamericana (UAI)', 'Facultad de Derecho y Ciencias Políticas', 'CABA', 'CABA', 'Privada', 'https://uai.edu.ar/');
+  insertUni.run('Universidad del Museo Social Argentino (UMSA)', 'Facultad de Ciencias Jurídicas y Sociales', 'CABA', 'CABA', 'Privada', 'https://www.umsa.edu.ar/');
+  insertUni.run('Universidad de Flores (UFLO)', 'Facultad de Derecho', 'CABA', 'CABA', 'Privada', 'https://www.uflo.edu.ar/');
+  insertUni.run('Universidad Empresarial Siglo 21 (UES21)', 'Abogacía', 'Córdoba', 'Córdoba', 'Privada', 'https://www.21.edu.ar/');
+  insertUni.run('Universidad FASTA', 'Facultad de Ciencias Jurídicas y Sociales', 'Mar del Plata', 'Buenos Aires', 'Privada', 'https://www.ufasta.edu.ar/');
+  insertUni.run('Universidad Blas Pascal (UBP)', 'Facultad de Derecho y Ciencias Sociales', 'Córdoba', 'Córdoba', 'Privada', 'https://www.ubp.edu.ar/');
+  insertUni.run('Universidad de Mendoza (UMendoza)', 'Facultad de Ciencias Jurídicas y Sociales', 'Mendoza', 'Mendoza', 'Privada', 'https://www.um.edu.ar/');
+  insertUni.run('Universidad Champagnat (UCH)', 'Facultad de Derecho', 'Mendoza', 'Mendoza', 'Privada', 'https://www.uch.edu.ar/');
+  insertUni.run('Universidad del Aconcagua (UDA)', 'Facultad de Ciencias Jurídicas y Sociales', 'Mendoza', 'Mendoza', 'Privada', 'https://www.uda.edu.ar/');
+  insertUni.run('Universidad Adventista del Plata (UAP)', 'Facultad de Ciencias Jurídicas y Políticas', 'Libertador San Martín', 'Entre Ríos', 'Privada', 'https://www.uap.edu.ar/');
+  insertUni.run('Universidad Nacional de San Antonio de Areco (UNSADA)', 'Centro Universitario', 'San Antonio de Areco', 'Buenos Aires', 'Pública', null);
+
+  // Study Plans (Seeding UBA as base)
+  const insertStudyPlan = db.prepare('INSERT INTO study_plans (university_id, subject_id, year, semester, category) VALUES (?, ?, ?, ?, ?)');
+  // UBA 
+  const ubaId = uni1.lastInsertRowid;
+  // Year 1
+  insertStudyPlan.run(ubaId, s3.lastInsertRowid, 1, 1, 'CPC'); // Teoría General del Derecho
+  insertStudyPlan.run(ubaId, s5.lastInsertRowid, 1, 1, 'CPC'); // Instituciones de Derecho Civil
+  insertStudyPlan.run(ubaId, s1.lastInsertRowid, 1, 2, 'CPC'); // Derecho Constitucional
+  insertStudyPlan.run(ubaId, s7.lastInsertRowid, 1, 2, 'CPC'); // Derechos Humanos
+  // Year 2
+  insertStudyPlan.run(ubaId, s6.lastInsertRowid, 2, 1, 'CPC'); // Teoría General del Proceso
+  insertStudyPlan.run(ubaId, s4.lastInsertRowid, 2, 1, 'CPC'); // Derecho Penal I
+  insertStudyPlan.run(ubaId, s2.lastInsertRowid, 2, 2, 'CPC'); // Obligaciones
+  insertStudyPlan.run(ubaId, s9.lastInsertRowid, 2, 2, 'CPC'); // Contratos
+  // Year 3
+  insertStudyPlan.run(ubaId, s10.lastInsertRowid, 3, 1, 'CPC'); // Familia y Sucesiones
+  insertStudyPlan.run(ubaId, s12.lastInsertRowid, 3, 1, 'CPC'); // Sociedades
+  insertStudyPlan.run(ubaId, s8.lastInsertRowid, 3, 2, 'CPC'); // Administrativo
+  insertStudyPlan.run(ubaId, s11.lastInsertRowid, 3, 2, 'CPC'); // Trabajo y Seguridad Social
+
+  // Chairs by University
   const insertChair = db.prepare('INSERT INTO chairs (university_id, subject_id, name, professor) VALUES (?, ?, ?, ?)');
-  const c1 = insertChair.run(uni1.lastInsertRowid, s1.lastInsertRowid, 'Cátedra Sabsay', 'Daniel Sabsay');
+  insertChair.run(ubaId, s1.lastInsertRowid, 'Cátedra A', 'Dr. Sola');
+  insertChair.run(ubaId, s1.lastInsertRowid, 'Cátedra B', 'Dra. Gelli');
+  insertChair.run(ubaId, s1.lastInsertRowid, 'Cátedra Sabsay', 'Daniel Sabsay');
 
   // Student Notes
   const insertNote = db.prepare('INSERT INTO student_notes (title, author_id, subject_id, university_id, chair_id, content, views, status, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   insertNote.run('Resumen Completo - Obligaciones (Cátedra Pizarro)', u2.lastInsertRowid, s2.lastInsertRowid, null, null, 'Este es un resumen exhaustivo de toda la materia...', 1250, 'published', '2026-01-15');
-  insertNote.run('Cuadro Sinóptico - Control de Constitucionalidad', u2.lastInsertRowid, s1.lastInsertRowid, uni1.lastInsertRowid, c1.lastInsertRowid, 'Esquema de las vías de control...', 250, 'published', '2026-02-10');
+  insertNote.run('Cuadro Sinóptico - Control de Constitucionalidad', u2.lastInsertRowid, s1.lastInsertRowid, uni1.lastInsertRowid, ubaId, 'Esquema de las vías de control...', 250, 'published', '2026-02-10');
 
   // Procedural Acts
   const insertAct = db.prepare('INSERT INTO procedural_acts (jurisdiction, fuero, name, days, type, normative_base) VALUES (?, ?, ?, ?, ?, ?)');

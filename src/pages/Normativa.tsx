@@ -39,7 +39,7 @@ export function Normativa() {
         <div className="relative z-10 space-y-4 max-w-2xl">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold uppercase tracking-wider border border-indigo-500/30">
             <Scale className="w-3 h-3" />
-            LexAR Normativa
+            LexARG Normativa
           </div>
           <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
             Consulta Inteligente de Normas

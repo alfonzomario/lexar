@@ -1,18 +1,26 @@
 import 'dotenv/config';
 import path from 'path';
 import express from 'express';
+import multer from 'multer';
+import type { Request } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { db } from './src/db/index.js';
 import { initNormativaDb } from './normativa_init.js';
 import http from 'http';
 import { Server } from 'socket.io';
+import { createRequire } from 'module';
+const require2 = createRequire(import.meta.url);
+const { PDFParse } = require2('pdf-parse');
 
 async function startServer() {
   initNormativaDb();
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   const httpServer = http.createServer(app);
+
+  // Multer for PDF uploads (max 20MB, memory storage)
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   const io = new Server(httpServer, {
     cors: { origin: '*' }
   });
@@ -253,70 +261,80 @@ async function startServer() {
     const user = userId ? (db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined) : undefined;
     const isSuperAdmin = user?.tier === 'super_admin';
     const subjectId = req.params.id;
+    const universityId = req.query.university_id;
     const uid = userId ?? 0;
     const voteCountSub = "(SELECT COUNT(*) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
     const userVotedSub = uid ? `(SELECT 1 FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ${uid})` : '0';
-    let notes: any[];
-    if (isSuperAdmin) {
-      notes = db.prepare(`
-        SELECT student_notes.*, users.name as author_name, subjects.name as subject_name,
-          un.name as university_name, ${voteCountSub} as vote_count, ${userVotedSub} as user_voted
-        FROM student_notes
-        JOIN users ON student_notes.author_id = users.id
-        JOIN subjects ON student_notes.subject_id = subjects.id
-        LEFT JOIN universities un ON student_notes.university_id = un.id
-        WHERE student_notes.subject_id = ?
-        ORDER BY student_notes.status ASC, student_notes.views DESC
-      `).all(subjectId);
-    } else {
-      notes = db.prepare(`
-        SELECT student_notes.*, users.name as author_name, subjects.name as subject_name,
-          un.name as university_name, ${voteCountSub} as vote_count, ${userVotedSub} as user_voted
-        FROM student_notes
-        JOIN users ON student_notes.author_id = users.id
-        JOIN subjects ON student_notes.subject_id = subjects.id
-        LEFT JOIN universities un ON student_notes.university_id = un.id
-        WHERE student_notes.subject_id = ? AND student_notes.status = 'published'
-        ORDER BY student_notes.views DESC
-      `).all(subjectId);
+    
+    let query = `
+      SELECT student_notes.*, users.name as author_name, subjects.name as subject_name,
+        un.name as university_name, ${voteCountSub} as vote_count, ${userVotedSub} as user_voted
+      FROM student_notes
+      JOIN users ON student_notes.author_id = users.id
+      JOIN subjects ON student_notes.subject_id = subjects.id
+      LEFT JOIN universities un ON student_notes.university_id = un.id
+      WHERE student_notes.subject_id = ?
+    `;
+    const params: any[] = [subjectId];
+
+    if (universityId) {
+      query += ` AND student_notes.university_id = ?`;
+      params.push(universityId);
     }
+
+    if (!isSuperAdmin) {
+      query += ` AND student_notes.status = 'published'`;
+    }
+
+    query += isSuperAdmin ? ` ORDER BY student_notes.status ASC, student_notes.views DESC` : ` ORDER BY student_notes.views DESC`;
+
+    const notes = db.prepare(query).all(...params);
+
+    let filteredNotes = notes;
     if (!canViewProContent(user?.tier)) {
-      notes = notes.map((n) => ({ ...n, file_url: null, has_document: !!n.file_url }));
+      filteredNotes = notes.map((n) => ({ ...n, file_url: null, has_document: !!n.file_url }));
     }
-    res.json(notes);
+    res.json(filteredNotes);
   });
 
   app.get('/api/subjects/:id/exams', (req, res) => {
     const userId = getUserId(req);
     const user = userId ? (db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined) : undefined;
     const isSuperAdmin = user?.tier === 'super_admin';
+    const subjectId = req.params.id;
+    const universityId = req.query.university_id;
     const uid = userId ?? 0;
     const voteCountSub = "(SELECT COUNT(*) FROM resource_votes WHERE resource_type = 'exam' AND resource_id = exams.id)";
     const userVotedSub = uid ? `(SELECT 1 FROM resource_votes WHERE resource_type = 'exam' AND resource_id = exams.id AND user_id = ${uid})` : '0';
-    let list: any[];
-    if (isSuperAdmin) {
-      list = db.prepare(`
-        SELECT exams.*, u.name as uploaded_by_name, un.name as university_name, ${voteCountSub} as vote_count, ${userVotedSub} as user_voted
-        FROM exams
-        LEFT JOIN users u ON exams.uploaded_by = u.id
-        LEFT JOIN universities un ON exams.university_id = un.id
-        WHERE exams.subject_id = ?
-        ORDER BY exams.created_at DESC
-      `).all(req.params.id);
-    } else {
-      list = db.prepare(`
-        SELECT exams.*, u.name as uploaded_by_name, un.name as university_name, ${voteCountSub} as vote_count, ${userVotedSub} as user_voted
-        FROM exams
-        LEFT JOIN users u ON exams.uploaded_by = u.id
-        LEFT JOIN universities un ON exams.university_id = un.id
-        WHERE exams.subject_id = ? AND exams.status = 'approved'
-        ORDER BY exams.created_at DESC
-      `).all(req.params.id);
+
+    let query = `
+      SELECT exams.*, users.name as uploaded_by_name, un.name as university_name,
+        ${voteCountSub} as vote_count, ${userVotedSub} as user_voted
+      FROM exams
+      JOIN users ON exams.uploaded_by = users.id
+      LEFT JOIN universities un ON exams.university_id = un.id
+      WHERE exams.subject_id = ?
+    `;
+    const params: any[] = [subjectId];
+
+    if (universityId) {
+      query += ` AND exams.university_id = ?`;
+      params.push(universityId);
     }
+
+    if (!isSuperAdmin) {
+      query += ` AND exams.status = 'approved'`;
+    }
+
+    query += ` ORDER BY exams.created_at DESC`;
+
+    const examsList = db.prepare(query).all(...params);
+
+    let filteredExams = examsList;
     if (!canViewProContent(user?.tier)) {
-      list = list.map((ex: any) => ({ ...ex, file_url: null, has_document: !!ex.file_url }));
+      filteredExams = examsList.map((ex) => ({ ...ex, file_url: null, has_document: !!ex.file_url }));
     }
-    res.json(list);
+    res.json(filteredExams);
   });
 
   const DOC_VIEWS_LIMIT_FREE = 1;
@@ -584,37 +602,118 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
     }
   });
 
-  // AI Parse Mock Endpoint
-  app.post('/api/briefs/ai-parse', (req, res) => {
-    // Simulate AI delay
-    setTimeout(() => {
-      res.json({
-        title: 'Fallo Extraído Automáticamente',
-        facts: 'El actor interpuso demanda solicitando la inconstitucionalidad de la norma. El demandado opuso excepciones alegando falta de legitimación.',
-        issue: '¿Corresponde declarar la inconstitucionalidad de la norma cuestionada por afectar el derecho a la propiedad privada?',
-        rule: 'Los derechos consagrados en la Constitución no son absolutos, pero su reglamentación mediante leyes no puede alterar su sustancia (Art. 28 CN).',
-        reasoning: 'El tribunal consideró que los hechos probados demuestran una afectación directa e irrazonable al núcleo del derecho de propiedad del actor, sin que exista una justificación o interés estatal superior válido en este caso.',
-        holding: 'Se hace lugar a la demanda, revocando la sentencia de cámara, y se declara la inconstitucionalidad de la norma para este caso concreto.',
-        relevance: 'Sentencia trascendental respecto a los límites del poder de policía del Estado sobre la reglamentación de derechos.',
-        keywords: 'Inconstitucionalidad, Propiedad, Razonabilidad'
+  // PDF Text Extraction Endpoint
+  app.post('/api/briefs/parse-pdf', upload.single('pdf'), async (req: Request & { file?: Express.Multer.File }, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo PDF.' });
+    try {
+      const parser = new PDFParse({ data: req.file.buffer });
+      const result = await parser.getText();
+      await parser.destroy();
+      const text = result.text?.trim();
+      if (!text || text.length < 50) return res.status(422).json({ error: 'No se pudo extraer texto del PDF. Puede ser un PDF de imagen escaneada.' });
+      res.json({ text, pages: result.totalPages || 0 });
+    } catch (e) {
+      console.error('PDF parse error:', e);
+      res.status(500).json({ error: 'Error al procesar el PDF.' });
+    }
+  });
+
+  // AI Parse Endpoint with Gemini
+  app.post('/api/briefs/ai-parse', async (req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'IA no configurada' });
+    const { text } = req.body;
+    if (!text || typeof text !== 'string') return res.status(400).json({ error: 'Falta texto' });
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+
+      // The full text is NOT processed by AI - it is kept verbatim.
+      // AI only extracts structured metadata fields.
+      const textToAnalyze = text.substring(0, 40000);
+
+      const prompt = `Eres un asistente jurídico especializado en análisis de sentencias judiciales argentinas.
+Tenés el texto de una sentencia y debés extraer ÚNICAMENTE los campos que se te piden, en formato JSON.
+
+REGLAS ESTRICTAS:
+- Sos un experto en análisis de jurisprudencia argentina. No inventes información que no esté en el texto.
+- Usá la terminología exacta del fallo; no parafrasees ni simplifiques conceptos técnico-jurídicos.
+- Para "title" extraé la carátula oficial del caso tal como figura en el encabezado (ej: "García, Juan c/ Estado Nacional s/ amparo"). Si no hay carátula, construila con Partes + Tipo de acción.
+- Para "court" indicá la instancia y sala exacta (ej: "Cámara Nacional de Apelaciones en lo Civil, Sala C" o "Corte Suprema de Justicia de la Nación").
+- Para "year" extraé solo el año numérico de la fecha de la sentencia.
+- Para "parties" usá el formato "Actor c/ Demandado".
+- Para "facts" describí brevemente el conflicto que origina el caso: qué pasó, quiénes son las partes y qué se reclama. Máximo 4 oraciones. Usá terminología del fallo.
+- Para "issue" enunciá en una sola PREGUNTA la cuestión jurídica central que el tribunal debe resolver.
+- Para "rule" describí en 2-3 oraciones la doctrina o regla de derecho que el tribunal establece o aplica.
+- Para "reasoning" describí en 3-5 oraciones los argumentos centrales del tribunal para llegar a su decisión. Usá los conceptos jurídicos del fallo.
+- Para "holding" describí en 1-2 oraciones la decisión concreta (qué se ordenó, revocó, confirmó o declaró).
+- Para "dissents" describí los votos en disidencia con sus fundamentos. Si no hay, escribí exactamente: "No presenta disidencias".
+- Para "relevance" explicá en 1-2 oraciones por qué el fallo es jurídicamente significativo o crea precedente.
+- Para "keywords" listá entre 4 y 8 términos jurídicos clave que aparezcan en el fallo, separados por coma.
+- Para "timeline" listá cronológicamente los hitos procesales importantes con su fecha. Máximo 8 ítems.
+- Para "citations" generá una lista TAXATIVA de TODAS las normas citadas: para cada una indicá Ley/Decreto/CN, número y artículo si están disponibles; para fallos precedentes indicá carátula y referencia "Fallos:" si figura. Incluí el considerando donde se cita.
+- Si algún campo no se puede determinar del texto, devolvé null.
+
+Respondé SOLO con el JSON, sin texto adicional ni markdown:
+{
+  "title": "Carátula oficial del caso",
+  "court": "Instancia y Sala que dicta sentencia",
+  "year": 2024,
+  "parties": "Actor c/ Demandado",
+  "facts": "Descripción breve del conflicto y lo reclamado",
+  "issue": "¿Pregunta jurídica central que resuelve el fallo?",
+  "rule": "Doctrina o regla jurídica establecida por el tribunal",
+  "reasoning": "Argumentos centrales del tribunal usando terminología del fallo",
+  "holding": "Decisión concreta adoptada",
+  "dissents": "Votos en disidencia y sus fundamentos, o 'No presenta disidencias'",
+  "relevance": "Importancia jurídica y valor de precedente",
+  "keywords": "término1, término2, término3, término4",
+  "timeline": [
+    { "date": "DD/MM/AAAA o 'Año'", "description": "Hito procesal" }
+  ],
+  "citations": [
+    { "norm_name": "Ley N° X, Art. Y / CN Art. Z / Fallo 'Apellido' (Fallos: Tomo:Pág.)", "considerando_ref": "Considerando N" }
+  ]
+}
+
+TEXTO DE LA SENTENCIA:
+---
+${textToAnalyze}
+---`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
       });
-    }, 2500);
+      const resultText = (response.text ?? '').trim();
+      let parsed;
+      try {
+        // Try to extract JSON from the response (model may add markdown)
+        const jsonMatch = resultText.match(/\{[\s\S]*\}/);
+        parsed = JSON.parse(jsonMatch ? jsonMatch[0] : resultText);
+      } catch {
+        parsed = JSON.parse(resultText.replace(/```json/g, '').replace(/```/g, '').trim());
+      }
+      res.json(parsed);
+    } catch (e) {
+      console.error('AI Parse Error:', e);
+      res.status(500).json({ error: 'Error al procesar con IA' });
+    }
   });
 
   // Create new Case Brief
   app.post('/api/briefs', (req, res) => {
-    const { title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id } = req.body;
+    const { title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id, court, year, parties, timeline, citations } = req.body;
 
     if (!title || !subject_id) {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
     }
 
     try {
-      // Start transaction or just sequential inserts. We do sequential for simplicity
       const result = db.prepare(`
-        INSERT INTO case_briefs (title, facts, issue, rule, reasoning, holding, relevance, keywords, is_demo) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-      `).run(title, facts, issue, rule, reasoning, holding, relevance, keywords);
+        INSERT INTO case_briefs (title, facts, issue, rule, reasoning, holding, relevance, keywords, is_demo, court, year, parties, timeline, citations) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+      `).run(title, facts, issue, rule, reasoning, holding, relevance, keywords, court || null, year ? Number(year) : null, parties || null, timeline ? JSON.stringify(timeline) : null, citations ? JSON.stringify(citations) : null);
 
       const insertRelation = db.prepare('INSERT INTO case_brief_subjects (case_brief_id, subject_id) VALUES (?, ?)');
       insertRelation.run(result.lastInsertRowid, subject_id);
@@ -622,19 +721,6 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
       res.status(201).json({ success: true, id: result.lastInsertRowid });
     } catch (error) {
       console.error('Error saving brief:', error);
-      res.status(500).json({ error: 'Error interno del servidor' });
-    }
-  });
-
-  // Delete a Case Brief
-  app.delete('/api/briefs/:id', (req, res) => {
-    try {
-      db.prepare('DELETE FROM case_brief_subjects WHERE case_brief_id = ?').run(req.params.id);
-      db.prepare('DELETE FROM text_annotations WHERE brief_id = ?').run(req.params.id);
-      db.prepare('DELETE FROM case_briefs WHERE id = ?').run(req.params.id);
-      res.json({ success: true });
-    } catch (error) {
-      console.error('Error deleting brief:', error);
       res.status(500).json({ error: 'Error interno del servidor' });
     }
   });
@@ -678,8 +764,47 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
 
   // Universities
   app.get('/api/universities', (req, res) => {
-    const unis = db.prepare('SELECT * FROM universities').all();
+    const unis = db.prepare('SELECT * FROM universities ORDER BY type ASC, name ASC').all();
     res.json(unis);
+  });
+
+  app.get('/api/universities/:id', (req, res) => {
+    const uni = db.prepare('SELECT * FROM universities WHERE id = ?').get(req.params.id);
+    if (!uni) return res.status(404).json({ error: 'Universidad no encontrada' });
+    res.json(uni);
+  });
+
+  // Edit university (super_admin only)
+  app.patch('/api/universities/:id', (req, res) => {
+    const auth = requireSuperAdmin(req, res);
+    if (!auth) return;
+    const { name, description, city, province, type, program_url } = req.body;
+    const uni = db.prepare('SELECT id FROM universities WHERE id = ?').get(req.params.id);
+    if (!uni) return res.status(404).json({ error: 'Universidad no encontrada' });
+    db.prepare(`
+      UPDATE universities SET
+        name = COALESCE(?, name),
+        description = COALESCE(?, description),
+        city = COALESCE(?, city),
+        province = COALESCE(?, province),
+        type = COALESCE(?, type),
+        program_url = COALESCE(?, program_url)
+      WHERE id = ?
+    `).run(name || null, description || null, city || null, province || null, type || null, program_url || null, req.params.id);
+    const updated = db.prepare('SELECT * FROM universities WHERE id = ?').get(req.params.id);
+    res.json(updated);
+  });
+
+  // Get study plan for a university
+  app.get('/api/universities/:id/study-plan', (req, res) => {
+    const plan = db.prepare(`
+      SELECT study_plans.*, subjects.name as subject_name, subjects.icon as subject_icon
+      FROM study_plans
+      JOIN subjects ON study_plans.subject_id = subjects.id
+      WHERE study_plans.university_id = ?
+      ORDER BY year ASC, semester ASC, subject_name ASC
+    `).all(req.params.id);
+    res.json(plan);
   });
 
   // Chairs by University

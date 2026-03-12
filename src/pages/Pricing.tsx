@@ -191,7 +191,7 @@ export function Pricing() {
             </div>
             <div>
               <h4 className="font-bold text-stone-900 mb-0.5">Bolsa de Trabajo</h4>
-              <p className="text-sm text-stone-500">Ofertas de pasantías y puestos junior en estudios jurídicos, exclusivas para la comunidad LexAR.</p>
+              <p className="text-sm text-stone-500">Ofertas de pasantías y puestos junior en estudios jurídicos, exclusivas para la comunidad LexARG.</p>
             </div>
           </div>
           <div className="flex gap-4 p-4 rounded-2xl bg-stone-50/80 border border-stone-100">

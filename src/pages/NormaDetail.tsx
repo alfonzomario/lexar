@@ -81,7 +81,7 @@ export function NormaDetail() {
 
   const handleCopy = () => {
     if (!norma) return;
-    navigator.clipboard.writeText(`${norma.tipo} ${norma.numero}/${norma.anio}: ${norma.titulo}\n\n${norma.texto}\n\nFuente: LexAR - ${norma.fuente_url}`);
+    navigator.clipboard.writeText(`${norma.tipo} ${norma.numero}/${norma.anio}: ${norma.titulo}\n\n${norma.texto}\n\nFuente: LexARG - ${norma.fuente_url}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -196,7 +196,7 @@ export function NormaDetail() {
                     <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl mb-8 flex gap-3 items-start">
                       <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                       <p className="text-xs text-amber-800 leading-relaxed">
-                        <strong>Aviso Legal:</strong> El texto aquí presentado se ofrece con fines informativos. LexAR no garantiza la exactitud absoluta de las transcripciones. Siempre verifique con la fuente oficial (Boletín Oficial / InfoLEG).
+                        <strong>Aviso Legal:</strong> El texto aquí presentado se ofrece con fines informativos. LexARG no garantiza la exactitud absoluta de las transcripciones. Siempre verifique con la fuente oficial (Boletín Oficial / InfoLEG).
                       </p>
                     </div>
                     <div className="whitespace-pre-wrap font-serif text-lg leading-relaxed text-stone-800">
@@ -251,7 +251,7 @@ export function NormaDetail() {
                 <Sparkles className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h3 className="font-bold">Asistente LexAR</h3>
+                <h3 className="font-bold">Asistente LexARG</h3>
                 <p className="text-[10px] text-stone-400 uppercase tracking-wider">IA Grounded en Normativa</p>
               </div>
             </div>

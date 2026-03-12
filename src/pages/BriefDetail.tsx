@@ -1,12 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router';
-import { Scale, ArrowLeft, FileText, Bookmark, Share2, AlertCircle, Sparkles, Trash2 } from 'lucide-react';
+import { Scale, ArrowLeft, FileText, Bookmark, Share2, AlertCircle, Sparkles, Trash2, Calendar, Users, Landmark, Book } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
 import Markdown from 'react-markdown';
 import { BalanzaLoader } from '../components/BalanzaLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { HighlightableText } from '../components/HighlightableText';
+import { LegalTextRenderer } from '../components/LegalTextRenderer';
 
 /** Formatea texto para lectura: normaliza espacios y preserva párrafos */
 function formatParagraphs(text: string | null | undefined): string {
@@ -163,6 +164,30 @@ export function BriefDetail() {
     }
   };
 
+  const [relatedBriefs, setRelatedBriefs] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (brief && activeTab === 'relacionados' && relatedBriefs.length === 0) {
+      fetch('/api/briefs')
+        .then(res => res.json())
+        .then(data => {
+          const currentKw = brief.keywords?.toLowerCase().split(',').map((k: string) => k.trim()) || [];
+          const related = data.filter((b: any) => {
+            if (b.id === brief.id) return false;
+            const kw = b.keywords?.toLowerCase().split(',').map((k: string) => k.trim()) || [];
+            return kw.some((k: string) => currentKw.includes(k));
+          });
+          setRelatedBriefs(related);
+        });
+    }
+  }, [brief, activeTab, relatedBriefs.length]);
+
+  let timelineArr: any[] = [];
+  try { if (brief?.timeline) timelineArr = JSON.parse(brief.timeline); } catch(e) {}
+
+  let citationsArr: any[] = [];
+  try { if (brief?.citations) citationsArr = JSON.parse(brief.citations); } catch(e) {}
+
   if (!brief) return (
     <div className="flex h-[60vh] items-center justify-center">
       <BalanzaLoader size="lg" text="Analizando Jurisprudencia..." />
@@ -190,7 +215,7 @@ export function BriefDetail() {
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div className="flex items-center gap-2 text-sm font-medium text-stone-500">
-          <span>LexAR Briefs</span>
+          <span>LexARG Briefs</span>
           <span>/</span>
           <span className="text-stone-900 truncate">Fallo</span>
         </div>
@@ -234,10 +259,30 @@ export function BriefDetail() {
                   </span>
                 )}
               </div>
-              <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-stone-900 mb-6 leading-tight">
+              <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-stone-900 mb-6 leading-tight" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                 {brief.title}
               </h1>
-              <div className="flex flex-wrap gap-2 mb-8">
+              <div className="flex flex-wrap gap-4 mb-6">
+                {brief.court && (
+                  <div className="flex items-center gap-2 text-stone-600 text-sm" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                    <Landmark className="w-4 h-4 text-indigo-500 shrink-0" />
+                    <span>{brief.court}</span>
+                  </div>
+                )}
+                {brief.year && (
+                  <div className="flex items-center gap-2 text-stone-600 text-sm" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                    <Calendar className="w-4 h-4 text-indigo-500 shrink-0" />
+                    <span>{brief.year}</span>
+                  </div>
+                )}
+                {brief.parties && (
+                  <div className="flex items-center gap-2 text-stone-600 text-sm" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                    <Users className="w-4 h-4 text-indigo-500 shrink-0" />
+                    <span>{brief.parties}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2 mb-8 border-t border-stone-100 pt-6">
                 {brief.keywords.split(',').map((kw: string) => (
                   <span key={kw} className="text-xs font-medium text-stone-600 bg-stone-100 px-2 py-1 rounded-md">
                     {kw.trim()}
@@ -247,16 +292,16 @@ export function BriefDetail() {
             </div>
           </div>
 
-          <div className="flex gap-4 border-b border-stone-200 overflow-x-auto pb-px sticky top-[72px] bg-[#FAF9F6] z-10 pt-4 px-2">
+          <div className="flex gap-1 border-b border-stone-200 overflow-x-auto pb-px sticky top-[72px] bg-[#FAF9F6] z-10 pt-4 px-1" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={clsx(
-                  'px-6 py-3 text-sm font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap',
+                  'px-5 py-3 text-xs font-bold uppercase tracking-widest transition-all border-b-2 whitespace-nowrap rounded-t-lg',
                   activeTab === tab.id
-                    ? 'border-indigo-600 text-indigo-600'
-                    : 'border-transparent text-stone-500 hover:text-stone-700 hover:border-stone-300'
+                    ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50'
+                    : 'border-transparent text-stone-400 hover:text-stone-700 hover:border-stone-300'
                 )}
               >
                 {tab.name}
@@ -267,52 +312,76 @@ export function BriefDetail() {
           <div className="mt-8 max-w-full">
             {activeTab === 'tldr' && (
               <div className="space-y-8">
+                {timelineArr.length > 0 && (
+                  <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
+                    <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-2">
+                      <Calendar className="w-5 h-5 text-indigo-600" />
+                      Línea de Tiempo Procesal
+                    </h2>
+                    <div className="relative border-l-2 border-stone-100 ml-3 space-y-6">
+                      {timelineArr.map((evt: any, idx: number) => (
+                        <div key={idx} className="relative pl-6">
+                          <div className="absolute -left-[9px] top-1.5 w-4 h-4 rounded-full border-4 border-white bg-indigo-500 shadow-sm" />
+                          <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 sm:items-baseline">
+                            <span className="text-sm font-bold text-indigo-600 shrink-0 bg-indigo-50 px-2 py-0.5 rounded-md w-fit">
+                              {evt.date}
+                            </span>
+                            <span className="text-stone-700 leading-relaxed max-w-full text-sm md:text-base">
+                              {evt.description}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
                 <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
-                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-2">
+                  <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                     <AlertCircle className="w-5 h-5 text-indigo-600" />
                     Cuestión Jurídica (Issue)
                   </h2>
-                  <div className="text-lg text-stone-800 leading-relaxed font-serif italic border-l-4 border-indigo-100 pl-4 py-1 whitespace-pre-line">
+                  <div className="text-base md:text-lg text-stone-800 leading-[1.9] italic border-l-4 border-indigo-200 pl-5 py-2 whitespace-pre-line" style={{ fontFamily: "'Lora', Georgia, serif" }}>
                     <HighlightableText text={formatParagraphs(brief.issue)} annotations={annotations} onAddAnnotation={handleAddAnnotation} />
                   </div>
                 </section>
 
                 <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
-                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-2">
+                  <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                     <FileText className="w-5 h-5 text-indigo-600" />
                     Regla / Doctrina
                   </h2>
-                  <div className="text-lg text-stone-800 leading-relaxed font-serif whitespace-pre-line">
+                  <div className="text-base md:text-lg text-stone-800 leading-[1.9] whitespace-pre-line" style={{ fontFamily: "'Lora', Georgia, serif" }}>
                     <HighlightableText text={formatParagraphs(brief.rule)} annotations={annotations} onAddAnnotation={handleAddAnnotation} />
                   </div>
                 </section>
 
                 <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
-                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-2">
+                  <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                     <Sparkles className="w-5 h-5 text-indigo-600" />
                     Argumentos Principales
                   </h2>
-                  <div className="text-lg text-stone-800 leading-relaxed font-serif whitespace-pre-line">
+                  <div className="text-base md:text-lg text-stone-800 leading-[1.9] whitespace-pre-line" style={{ fontFamily: "'Lora', Georgia, serif" }}>
                     <HighlightableText text={formatParagraphs(brief.reasoning)} annotations={annotations} onAddAnnotation={handleAddAnnotation} />
                   </div>
                 </section>
 
                 <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
-                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-2">
+                  <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                     <Scale className="w-5 h-5 text-indigo-600" />
                     Decisión (Holding)
                   </h2>
-                  <div className="text-lg text-stone-800 leading-relaxed font-serif">
+                  <div className="text-base md:text-lg text-stone-800 leading-[1.9] whitespace-pre-line" style={{ fontFamily: "'Lora', Georgia, serif" }}>
                     <HighlightableText text={formatParagraphs(brief.holding)} annotations={annotations} onAddAnnotation={handleAddAnnotation} />
                   </div>
                 </section>
 
                 <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
-                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-2">
+                  <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                     <Bookmark className="w-5 h-5 text-indigo-600" />
                     Relevancia
                   </h2>
-                  <div className="text-lg text-stone-800 leading-relaxed font-serif bg-stone-50 p-6 rounded-xl whitespace-pre-line">
+                  <div className="text-base md:text-lg text-stone-800 leading-[1.9] bg-indigo-50/40 p-6 rounded-xl whitespace-pre-line border border-indigo-100/50" style={{ fontFamily: "'Lora', Georgia, serif" }}>
                     <HighlightableText text={formatParagraphs(brief.relevance)} annotations={annotations} onAddAnnotation={handleAddAnnotation} />
                   </div>
                 </section>
@@ -320,15 +389,59 @@ export function BriefDetail() {
             )}
 
             {activeTab === 'full' && (
+              <div className="bg-[#FDFBF7] p-8 md:p-14 lg:p-20 rounded-3xl shadow-[inset_0_2px_20px_rgba(0,0,0,0.04)] border border-stone-200/60 max-w-4xl mx-auto">
+                <h2 className="text-2xl md:text-3xl font-bold mb-10 text-stone-800 border-b border-stone-200 pb-6 text-center tracking-tight" style={{ fontFamily: "'Lora', Georgia, serif" }}>Sentencia Completa</h2>
+                <LegalTextRenderer text={brief.facts || ''} />
+              </div>
+            )}
+
+            {activeTab === 'normativa' && (
               <div className="bg-white p-8 md:p-12 rounded-3xl shadow-sm border border-stone-100">
-                <h2 className="text-2xl font-bold mb-6 text-stone-900 border-b border-stone-100 pb-2">Sentencia Completa</h2>
-                <div className="text-lg text-stone-700 leading-relaxed font-serif whitespace-pre-line">
-                  <HighlightableText
-                    text={formatParagraphs(brief.facts)}
-                    annotations={annotations}
-                    onAddAnnotation={handleAddAnnotation}
-                  />
-                </div>
+                <h2 className="text-xl font-bold mb-6 text-stone-900 border-b border-stone-100 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Normativa y Fallos Citados</h2>
+                {citationsArr.length > 0 ? (
+                  <div className="space-y-3">
+                    {citationsArr.map((cit: any, idx: number) => (
+                      <div key={idx} className="p-5 bg-stone-50/80 rounded-xl border border-stone-100 flex flex-col gap-1.5 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all">
+                        <span className="font-semibold text-stone-900 text-base flex items-center gap-2" style={{ fontFamily: "'Lora', Georgia, serif" }}>
+                          <Book className="w-4 h-4 text-indigo-500 shrink-0" />
+                          {cit.norm_name}
+                        </span>
+                        <span className="text-stone-500 text-xs ml-6" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Citado en: {cit.considerando_ref}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-stone-400 text-center py-8" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>La IA no ha extraído normativa citada de este fallo.</p>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'relacionados' && (
+              <div className="space-y-6">
+                <h2 className="text-2xl font-bold mb-4 text-stone-900">Fallos Relacionados</h2>
+                {relatedBriefs.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {relatedBriefs.map(b => (
+                      <Link
+                        key={b.id}
+                        to={`/briefs/${b.id}`}
+                        className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-indigo-300 transition-all flex flex-col h-full hover:shadow-md"
+                      >
+                        <h3 className="text-lg font-bold text-stone-900 mb-2 leading-tight">{b.title}</h3>
+                        <p className="text-stone-500 text-sm line-clamp-2 flex-1 mb-4">{b.relevance}</p>
+                        <div className="flex flex-wrap gap-1 mt-auto">
+                          {b.keywords?.split(',').slice(0, 3).map((kw: string, idx: number) => (
+                            <span key={idx} className="bg-stone-100 text-stone-600 text-[10px] uppercase font-semibold px-2 py-1 rounded-md">
+                              {kw.trim()}
+                            </span>
+                          ))}
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-stone-500 text-center py-12 bg-white rounded-2xl border border-stone-100">No hay fallos relacionados con estas etiquetas.</p>
+                )}
               </div>
             )}
           </div>
@@ -361,7 +474,7 @@ export function BriefDetail() {
                 <Sparkles className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h3 className="font-bold">Asistente LexAR</h3>
+                <h3 className="font-bold">Asistente LexARG</h3>
                 <p className="text-[10px] text-stone-400 uppercase tracking-wider">IA Especializada en Casos</p>
               </div>
             </div>
