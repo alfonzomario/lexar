@@ -6,12 +6,17 @@ import type { Request } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { db } from './src/db/index.js';
+import { db as dbDrizzle } from './src/db/drizzle.js';
+import { subjects } from './src/db/schema.js';
 import { initNormativaDb } from './normativa_init.js';
 import http from 'http';
 import { Server } from 'socket.io';
 import { createRequire } from 'module';
 const require2 = createRequire(import.meta.url);
 const { PDFParse } = require2('pdf-parse');
+import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
+import { authRoutes } from './src/backend/routes/auth.routes.js';
 
 async function startServer() {
   initNormativaDb();
@@ -26,8 +31,17 @@ async function startServer() {
   });
 
   app.use(express.json());
+  app.use(cookieParser());
+  app.use('/api/auth', authRoutes);
 
   const getUserId = (req: express.Request): number | null => {
+    const token = req.cookies?.token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
+    if (token) {
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_development_lexargar') as any;
+            return decoded.userId;
+        } catch(e) {}
+    }
     const id = req.headers['x-user-id'];
     if (id === undefined || id === null) return null;
     const n = parseInt(String(id), 10);
@@ -217,18 +231,28 @@ async function startServer() {
   });
 
   // Subjects
-  app.get('/api/subjects', (req, res) => {
-    const subjects = db.prepare('SELECT * FROM subjects').all();
-    res.json(subjects);
+  app.get('/api/subjects', async (req, res) => {
+    try {
+      const allSubjects = await dbDrizzle.query.subjects.findMany();
+      res.json(allSubjects);
+    } catch (e) {
+      res.status(500).json({ error: 'Error del servidor' });
+    }
   });
 
-  app.get('/api/subjects/:id', (req, res) => {
-    const subject = db.prepare('SELECT id, name, description, icon FROM subjects WHERE id = ?').get(req.params.id);
-    if (!subject) return res.status(404).json({ error: 'Materia no encontrada' });
-    res.json(subject);
+  app.get('/api/subjects/:id', async (req, res) => {
+    try {
+      const subject = await dbDrizzle.query.subjects.findFirst({
+        where: (s, { eq }) => eq(s.id, Number(req.params.id))
+      });
+      if (!subject) return res.status(404).json({ error: 'Materia no encontrada' });
+      res.json(subject);
+    } catch (e) {
+      res.status(500).json({ error: 'Error del servidor' });
+    }
   });
 
-  app.post('/api/subjects', (req, res) => {
+  app.post('/api/subjects', async (req, res) => {
     const auth = requireSuperAdmin(req, res);
     if (!auth) return;
     const { name, description, icon } = req.body;
@@ -236,12 +260,12 @@ async function startServer() {
       return res.status(400).json({ error: 'Nombre de materia obligatorio' });
     }
     try {
-      const result = db.prepare('INSERT INTO subjects (name, description, icon) VALUES (?, ?, ?)').run(
-        name.trim(),
-        description && typeof description === 'string' ? description.trim() : null,
-        icon && typeof icon === 'string' ? icon.trim() : null
-      );
-      res.status(201).json({ success: true, id: result.lastInsertRowid });
+      const result = await dbDrizzle.insert(subjects).values({
+        name: name.trim(),
+        description: description && typeof description === 'string' ? description.trim() : null,
+        icon: icon && typeof icon === 'string' ? icon.trim() : null
+      }).returning({ insertedId: subjects.id });
+      res.status(201).json({ success: true, id: result[0].insertedId });
     } catch (e) {
       console.error('Error creating subject:', e);
       res.status(500).json({ error: 'Error al crear la materia' });

@@ -12,8 +12,8 @@ interface User {
 
 interface AuthContextType {
     user: User | null;
-    login: (email: string) => Promise<void>;
-    logout: () => void;
+    login: (email: string, password?: string) => Promise<void>;
+    logout: () => Promise<void>;
     isLoading: boolean;
     isPro: boolean;
     isBasic: boolean;
@@ -27,53 +27,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        // Check local storage for mocked session on load
-        const savedUserId = localStorage.getItem('lexar_mock_user_id');
-        if (savedUserId) {
-            fetchUserById(parseInt(savedUserId));
-        } else {
-            setIsLoading(false);
-        }
+        fetchCurrentUser();
     }, []);
 
-    const fetchUserById = async (id: number) => {
+    const fetchCurrentUser = async () => {
         try {
-            const res = await fetch('/api/users');
-            const users = await res.json();
-            const foundUser = users.find((u: User) => u.id === id);
-            if (foundUser) {
-                setUser(foundUser);
+            const res = await fetch('/api/auth/me');
+            if (res.ok) {
+                const data = await res.json();
+                setUser(data.user);
             } else {
-                localStorage.removeItem('lexar_mock_user_id');
+                setUser(null);
             }
         } catch (e) {
             console.error('Error fetching user session:', e);
+            setUser(null);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const login = async (email: string) => {
+    const login = async (email: string, password?: string) => {
         setIsLoading(true);
         try {
-            const res = await fetch('/api/users');
-            const users = await res.json();
-            const foundUser = users.find((u: User) => u.email === email);
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            const data = await res.json();
 
-            if (foundUser) {
-                setUser(foundUser);
-                localStorage.setItem('lexar_mock_user_id', foundUser.id.toString());
+            if (res.ok) {
+                setUser(data.user);
             } else {
-                throw new Error('Usuario no encontrado en la DB de prueba');
+                throw new Error(data.error || 'Credenciales inválidas');
             }
         } finally {
             setIsLoading(false);
         }
     };
 
-    const logout = () => {
+    const logout = async () => {
+        try {
+            await fetch('/api/auth/logout', { method: 'POST' });
+        } catch (e) {
+            console.error('Error logging out:', e);
+        }
         setUser(null);
-        localStorage.removeItem('lexar_mock_user_id');
     };
 
     return (
@@ -82,8 +82,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             login,
             logout,
             isLoading,
-            isPro: user?.tier === 'pro' || user?.tier === 'admin',
-            isBasic: user?.tier === 'basic',
+            isPro: user?.tier === 'pro' || user?.tier === 'admin' || user?.tier === 'super_admin',
+            isBasic: user?.tier === 'basic' || user?.tier === 'pro' || user?.tier === 'admin' || user?.tier === 'super_admin',
             isSuperAdmin: user?.tier === 'super_admin'
         }}>
             {children}

@@ -1,26 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
-import { Scale, Search, Filter, Sparkles } from 'lucide-react';
+import { Scale, Search, Filter, Sparkles, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { UploadBriefModal } from '../components/UploadBriefModal';
+import { useQuery } from '@tanstack/react-query';
 
 export function Briefs() {
-  const [briefs, setBriefs] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
-  const fetchBriefs = () => {
-    fetch('/api/briefs')
-      .then((res) => res.json())
-      .then((data) => setBriefs(data));
-  };
-
-  useEffect(() => {
-    fetchBriefs();
-  }, []);
+  const { data: briefs = [], isLoading, refetch } = useQuery({
+    queryKey: ['briefs'],
+    queryFn: async () => {
+      const res = await fetch('/api/briefs');
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    }
+  });
 
   const filteredBriefs = briefs.filter(
-    (brief) =>
+    (brief: any) =>
       brief.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       brief.keywords?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       brief.subject_names?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -68,46 +67,52 @@ export function Briefs() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredBriefs.map((brief) => (
-          <Link
-            key={brief.id}
-            to={`/briefs/${brief.id}`}
-            className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-indigo-300 transition-all hover:shadow-md flex flex-col h-full"
-          >
-            <div className="flex flex-wrap gap-2 mb-3">
-              {brief.subject_names?.split(',').map((subject: string, idx: number) => (
-                <span key={idx} className="bg-indigo-50 text-indigo-700 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                  {subject}
-                </span>
-              ))}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredBriefs.map((brief: any) => (
+            <Link
+              key={brief.id}
+              to={`/briefs/${brief.id}`}
+              className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-indigo-300 transition-all hover:shadow-md flex flex-col h-full"
+            >
+              <div className="flex flex-wrap gap-2 mb-3">
+                {brief.subject_names?.split(',').map((subject: string, idx: number) => (
+                  <span key={idx} className="bg-indigo-50 text-indigo-700 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                    {subject}
+                  </span>
+                ))}
+              </div>
+              <h3 className="text-lg font-bold text-stone-900 mb-2 leading-tight">
+                {brief.title}
+              </h3>
+              <p className="text-stone-500 text-sm line-clamp-3 flex-1 mb-4">
+                {brief.relevance}
+              </p>
+              <div className="flex flex-wrap gap-1 mt-auto">
+                {brief.keywords?.split(',').slice(0, 3).map((keyword: string, idx: number) => (
+                  <span key={idx} className="bg-stone-100 text-stone-600 text-[10px] uppercase font-semibold px-2 py-1 rounded-md">
+                    {keyword.trim()}
+                  </span>
+                ))}
+              </div>
+            </Link>
+          ))}
+          {filteredBriefs.length === 0 && (
+            <div className="col-span-full text-center py-12 text-stone-500">
+              No se encontraron fallos que coincidan con tu búsqueda.
             </div>
-            <h3 className="text-lg font-bold text-stone-900 mb-2 leading-tight">
-              {brief.title}
-            </h3>
-            <p className="text-stone-500 text-sm line-clamp-3 flex-1 mb-4">
-              {brief.relevance}
-            </p>
-            <div className="flex flex-wrap gap-1 mt-auto">
-              {brief.keywords?.split(',').slice(0, 3).map((keyword: string, idx: number) => (
-                <span key={idx} className="bg-stone-100 text-stone-600 text-[10px] uppercase font-semibold px-2 py-1 rounded-md">
-                  {keyword.trim()}
-                </span>
-              ))}
-            </div>
-          </Link>
-        ))}
-        {filteredBriefs.length === 0 && (
-          <div className="col-span-full text-center py-12 text-stone-500">
-            No se encontraron fallos que coincidan con tu búsqueda.
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       <UploadBriefModal
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
-        onSuccess={fetchBriefs}
+        onSuccess={() => refetch()}
       />
     </motion.div>
   );

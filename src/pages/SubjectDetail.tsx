@@ -8,6 +8,7 @@ import { motion } from 'motion/react';
 import { clsx } from 'clsx';
 import { BalanzaLoader } from '../components/BalanzaLoader';
 import { useAuth } from '../contexts/AuthContext';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 /** Convierte un link de Google Drive compartido en URL de preview para iframe */
 function getDrivePreviewUrl(shareUrl: string): string | null {
@@ -23,18 +24,12 @@ export function SubjectDetail() {
   const [searchParams] = useSearchParams();
   const universityId = searchParams.get('university_id');
   const { user, isSuperAdmin, isPro, isBasic } = useAuth();
+  const queryClient = useQueryClient();
   const isBasicOrAbove = user && ['basic', 'pro', 'admin', 'super_admin'].includes(user.tier);
   const [savedForLaterIds, setSavedForLaterIds] = useState<Set<string>>(new Set());
   const [documentQuota, setDocumentQuota] = useState<{ used: number; limit: number } | null>(null);
-  const [subject, setSubject] = useState<any>(null);
-  const [briefs, setBriefs] = useState<any[]>([]);
-  const [bibliography, setBibliography] = useState<any[]>([]);
-  const [notes, setNotes] = useState<any[]>([]);
-  const [exams, setExams] = useState<any[]>([]);
-  const [flashcards, setFlashcards] = useState<any[]>([]);
+  
   const [activeTab, setActiveTab] = useState('bibliografia');
-  const [loadingExams, setLoadingExams] = useState(false);
-  const [loadingFlash, setLoadingFlash] = useState(false);
   const [examModal, setExamModal] = useState(false);
   const [examTitle, setExamTitle] = useState('');
   const [examDesc, setExamDesc] = useState('');
@@ -53,7 +48,6 @@ export function SubjectDetail() {
   const [noteYear, setNoteYear] = useState<string>('');
   const [noteUniversityId, setNoteUniversityId] = useState<string>(universityId || '');
   const [submittingNote, setSubmittingNote] = useState(false);
-  const [universities, setUniversities] = useState<{ id: number; name: string }[]>([]);
   const [previewModal, setPreviewModal] = useState<{ open: boolean; url: string; title: string }>({ open: false, url: '', title: '' });
   const [addFlashcardModal, setAddFlashcardModal] = useState(false);
   const [flashcardFront, setFlashcardFront] = useState('');
@@ -176,7 +170,7 @@ export function SubjectDetail() {
         alert(data.error || 'No se pudo registrar el voto');
         return;
       }
-      setNotes((prev) => prev.map((n: any) => n.id === noteId ? { ...n, vote_count: (n.vote_count ?? 0) + (data.already_voted ? 0 : 1), user_voted: 1 } : n));
+      queryClient.invalidateQueries({ queryKey: ['notes', id, universityId] });
     } catch (e) {
       alert('Error al votar');
     }
@@ -191,78 +185,82 @@ export function SubjectDetail() {
         alert(data.error || 'No se pudo registrar el voto');
         return;
       }
-      setExams((prev) => prev.map((ex: any) => ex.id === examId ? { ...ex, vote_count: (ex.vote_count ?? 0) + (data.already_voted ? 0 : 1), user_voted: 1 } : ex));
+      queryClient.invalidateQueries({ queryKey: ['exams', id, universityId] });
     } catch (e) {
       alert('Error al votar');
     }
   };
 
-  useEffect(() => {
-    fetch('/api/subjects')
-      .then((res) => res.json())
-      .then((data) => setSubject(data.find((s: any) => s.id === Number(id))));
+  const { data: subject } = useQuery({
+    queryKey: ['subject', id],
+    queryFn: async () => {
+      const res = await fetch('/api/subjects');
+      const data = await res.json();
+      return data.find((s: any) => s.id === Number(id));
+    },
+    enabled: !!id,
+  });
 
-    fetch('/api/briefs')
-      .then((res) => res.json())
-      .then((data) => {
-        const sid = Number(id);
-        setBriefs(data.filter((b: any) => {
-          const ids = b.subject_ids ? String(b.subject_ids).split(',').map((n: string) => Number(n.trim())) : [];
-          return ids.includes(sid);
-        }));
+  const { data: briefs = [] } = useQuery({
+    queryKey: ['briefs', id],
+    queryFn: async () => {
+      const res = await fetch('/api/briefs');
+      const data = await res.json();
+      const sid = Number(id);
+      return data.filter((b: any) => {
+        const ids = b.subject_ids ? String(b.subject_ids).split(',').map((n: string) => Number(n.trim())) : [];
+        return ids.includes(sid);
       });
-  }, [id]);
+    },
+    enabled: !!id,
+  });
 
-  useEffect(() => {
-    if (!id) return;
-    fetch(`/api/subjects/${id}/bibliography`).then((r) => r.json()).then(setBibliography);
-  }, [id]);
+  const { data: bibliography = [] } = useQuery({
+    queryKey: ['bibliography', id],
+    queryFn: async () => {
+      const res = await fetch(`/api/subjects/${id}/bibliography`);
+      return res.json();
+    },
+    enabled: !!id,
+  });
 
-  useEffect(() => {
-    fetch('/api/universities').then((r) => r.json()).then((data) => setUniversities(Array.isArray(data) ? data : []));
-  }, []);
+  const { data: universities = [] } = useQuery({
+    queryKey: ['universities'],
+    queryFn: async () => {
+      const res = await fetch('/api/universities');
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    }
+  });
 
-  useEffect(() => {
-    if (!id || activeTab !== 'apuntes') return;
-    const url = `/api/subjects/${id}/notes${universityId ? `?university_id=${universityId}` : ''}`;
-    fetch(url, { headers: headers() }).then((r) => r.json()).then(setNotes);
-  }, [id, activeTab, user, universityId]);
+  const { data: notes = [], isLoading: loadingNotes } = useQuery({
+    queryKey: ['notes', id, universityId],
+    queryFn: async () => {
+      const url = `/api/subjects/${id}/notes${universityId ? `?university_id=${universityId}` : ''}`;
+      const res = await fetch(url, { headers: headers() });
+      return res.json();
+    },
+    enabled: !!id && activeTab === 'apuntes',
+  });
 
-  useEffect(() => {
-    if (!id || activeTab !== 'exams') return;
-    setLoadingExams(true);
-    const url = `/api/subjects/${id}/exams${universityId ? `?university_id=${universityId}` : ''}`;
-    fetch(url, { headers: headers() })
-      .then((r) => r.json())
-      .then((data) => { setExams(data); setLoadingExams(false); })
-      .catch(() => setLoadingExams(false));
-  }, [id, activeTab, user, universityId]);
+  const { data: exams = [], isLoading: loadingExams } = useQuery({
+    queryKey: ['exams', id, universityId],
+    queryFn: async () => {
+      const url = `/api/subjects/${id}/exams${universityId ? `?university_id=${universityId}` : ''}`;
+      const res = await fetch(url, { headers: headers() });
+      return res.json();
+    },
+    enabled: !!id && activeTab === 'exams',
+  });
 
-  useEffect(() => {
-    if (!id || activeTab !== 'flashcards') return;
-    setLoadingFlash(true);
-    fetch(`/api/subjects/${id}/flashcards`)
-      .then((r) => r.json())
-      .then((data) => { setFlashcards(data); setLoadingFlash(false); })
-      .catch(() => setLoadingFlash(false));
-  }, [id, activeTab]);
-
-  const refetchExams = () => {
-    if (!id) return;
-    const url = `/api/subjects/${id}/exams${universityId ? `?university_id=${universityId}` : ''}`;
-    fetch(url, { headers: headers() }).then((r) => r.json()).then(setExams);
-  };
-
-  const refetchFlashcards = () => {
-    if (!id) return;
-    fetch(`/api/subjects/${id}/flashcards`).then((r) => r.json()).then(setFlashcards);
-  };
-
-  const refetchNotes = () => {
-    if (!id) return;
-    const url = `/api/subjects/${id}/notes${universityId ? `?university_id=${universityId}` : ''}`;
-    fetch(url, { headers: headers() }).then((r) => r.json()).then(setNotes);
-  };
+  const { data: flashcards = [], isLoading: loadingFlash } = useQuery({
+    queryKey: ['flashcards', id],
+    queryFn: async () => {
+      const res = await fetch(`/api/subjects/${id}/flashcards`);
+      return res.json();
+    },
+    enabled: !!id && activeTab === 'flashcards',
+  });
 
   const handleSubmitNote = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -289,7 +287,7 @@ export function SubjectDetail() {
       setNoteDescription('');
       setNoteYear('');
       setNoteUniversityId('');
-      refetchNotes();
+      queryClient.invalidateQueries({ queryKey: ['notes', id, universityId] });
       if (data.status === 'published') {
         alert('Apunte publicado.');
       } else {
@@ -306,7 +304,7 @@ export function SubjectDetail() {
     if (!user) return;
     try {
       await fetch(`/api/notes/${noteId}/approve`, { method: 'PATCH', headers: headers() });
-      refetchNotes();
+      queryClient.invalidateQueries({ queryKey: ['notes', id, universityId] });
     } catch (e) {
       alert('Error al aprobar');
     }
@@ -316,7 +314,7 @@ export function SubjectDetail() {
     if (!user) return;
     try {
       await fetch(`/api/notes/${noteId}/reject`, { method: 'PATCH', headers: headers() });
-      refetchNotes();
+      queryClient.invalidateQueries({ queryKey: ['notes', id, universityId] });
     } catch (e) {
       alert('Error al rechazar');
     }
@@ -331,7 +329,7 @@ export function SubjectDetail() {
         alert(data.error || 'No se pudo eliminar. ¿Sos super admin?');
         return;
       }
-      setNotes((prev) => prev.filter((n: any) => n.id !== noteId));
+      queryClient.invalidateQueries({ queryKey: ['notes', id, universityId] });
     } catch (e) {
       alert('Error al eliminar');
     }
@@ -346,7 +344,7 @@ export function SubjectDetail() {
         alert(data.error || 'No se pudo eliminar. ¿Sos super admin?');
         return;
       }
-      setExams((prev) => prev.filter((ex: any) => ex.id !== examId));
+      queryClient.invalidateQueries({ queryKey: ['exams', id, universityId] });
     } catch (e) {
       alert('Error al eliminar');
     }
@@ -376,7 +374,7 @@ export function SubjectDetail() {
       setExamUrl('');
       setExamYear('');
       setExamUniversityId('');
-      refetchExams();
+      queryClient.invalidateQueries({ queryKey: ['exams', id, universityId] });
     } catch (err) {
       alert((err as Error).message);
     } finally {
@@ -388,7 +386,7 @@ export function SubjectDetail() {
     if (!user) return;
     try {
       await fetch(`/api/exams/${examId}/approve`, { method: 'PATCH', headers: headers() });
-      refetchExams();
+      queryClient.invalidateQueries({ queryKey: ['exams', id, universityId] });
     } catch (e) {
       alert('Error al aprobar');
     }
@@ -398,7 +396,7 @@ export function SubjectDetail() {
     if (!user) return;
     try {
       await fetch(`/api/exams/${examId}/reject`, { method: 'PATCH', headers: headers() });
-      refetchExams();
+      queryClient.invalidateQueries({ queryKey: ['exams', id, universityId] });
     } catch (e) {
       alert('Error al rechazar');
     }
@@ -415,7 +413,7 @@ export function SubjectDetail() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error');
-      refetchFlashcards();
+      queryClient.invalidateQueries({ queryKey: ['flashcards', id] });
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -432,7 +430,7 @@ export function SubjectDetail() {
         body: JSON.stringify({ front: editFront, back: editBack }),
       });
       setEditingCard(null);
-      refetchFlashcards();
+      queryClient.invalidateQueries({ queryKey: ['flashcards', id] });
     } catch (e) {
       alert('Error al guardar');
     }
@@ -447,7 +445,7 @@ export function SubjectDetail() {
         alert(data.error || 'No se pudo eliminar. ¿Sos super admin?');
         return;
       }
-      setFlashcards((prev) => prev.filter((c: any) => c.id !== cardId));
+      queryClient.invalidateQueries({ queryKey: ['flashcards', id] });
     } catch (e) {
       alert('Error al eliminar');
     }
@@ -468,7 +466,7 @@ export function SubjectDetail() {
       setAddFlashcardModal(false);
       setFlashcardFront('');
       setFlashcardBack('');
-      refetchFlashcards();
+      queryClient.invalidateQueries({ queryKey: ['flashcards', id] });
     } catch (err) {
       alert((err as Error).message);
     } finally {

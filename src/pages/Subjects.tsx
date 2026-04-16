@@ -1,52 +1,61 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
-import { BookOpen, Scale, ArrowRight, Plus, X } from 'lucide-react';
+import { BookOpen, Scale, ArrowRight, Plus, X, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export function Subjects() {
   const { user, isSuperAdmin } = useAuth();
-  const [subjects, setSubjects] = useState<any[]>([]);
+  const queryClient = useQueryClient();
+  
   const [showNewModal, setShowNewModal] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newIcon, setNewIcon] = useState('BookOpen');
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const fetchSubjects = () => {
-    fetch('/api/subjects')
-      .then((res) => res.json())
-      .then((data) => setSubjects(data));
-  };
+  const { data: subjects = [], isLoading } = useQuery({
+    queryKey: ['subjects'],
+    queryFn: async () => {
+      const res = await fetch('/api/subjects');
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    }
+  });
 
-  useEffect(() => {
-    fetchSubjects();
-  }, []);
-
-  const handleCreateSubject = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !newName.trim()) return;
-    setError('');
-    setSaving(true);
-    try {
+  const createSubjectMutation = useMutation({
+    mutationFn: async (newSubject: { name: string; description: string | null; icon: string | null }) => {
       const res = await fetch('/api/subjects', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User-Id': String(user.id) },
-        body: JSON.stringify({ name: newName.trim(), description: newDesc.trim() || null, icon: newIcon || null }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSubject),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error al crear');
+      if (!res.ok) throw new Error(data.error || 'Error al crear la materia');
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjects'] });
       setShowNewModal(false);
       setNewName('');
       setNewDesc('');
       setNewIcon('BookOpen');
-      fetchSubjects();
-    } catch (err: any) {
+    },
+    onError: (err: any) => {
       setError(err.message || 'Error al crear la materia');
-    } finally {
-      setSaving(false);
     }
+  });
+
+  const handleCreateSubject = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newName.trim()) return;
+    setError('');
+    createSubjectMutation.mutate({ 
+      name: newName.trim(), 
+      description: newDesc.trim() || null, 
+      icon: newIcon || null 
+    });
   };
 
   const containerVariants = {
@@ -55,11 +64,6 @@ export function Subjects() {
       opacity: 1,
       transition: { staggerChildren: 0.1 }
     }
-  };
-
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0 }
   };
 
   return (
@@ -85,7 +89,7 @@ export function Subjects() {
       </div>
 
       {showNewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => !saving && setShowNewModal(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => !createSubjectMutation.isPending && setShowNewModal(false)}>
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -94,7 +98,7 @@ export function Subjects() {
           >
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold text-stone-900">Nueva materia</h2>
-              <button type="button" onClick={() => !saving && setShowNewModal(false)} className="p-2 text-stone-400 hover:text-stone-600 rounded-lg">
+              <button type="button" onClick={() => !createSubjectMutation.isPending && setShowNewModal(false)} className="p-2 text-stone-400 hover:text-stone-600 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -125,8 +129,8 @@ export function Subjects() {
                 <button type="button" onClick={() => setShowNewModal(false)} className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-700 font-medium hover:bg-stone-50">
                   Cancelar
                 </button>
-                <button type="submit" disabled={saving || !newName.trim()} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-50">
-                  {saving ? 'Guardando...' : 'Crear materia'}
+                <button type="submit" disabled={createSubjectMutation.isPending || !newName.trim()} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-50">
+                  {createSubjectMutation.isPending ? 'Guardando...' : 'Crear materia'}
                 </button>
               </div>
             </form>
@@ -134,49 +138,54 @@ export function Subjects() {
         </div>
       )}
 
-      <motion.div
-        variants={containerVariants}
-        initial="hidden"
-        animate="show"
-        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
-      >
-        {subjects.map((subject: any, index: number) => (
-          <motion.div
-            key={subject.id}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.1 }}
-            className="h-full"
-          >
-            <Link
-              to={`/subjects/${subject.id}`}
-              className="bg-white p-6 rounded-2xl shadow-sm border border-stone-100 hover:border-indigo-200 hover:shadow-xl transition-all duration-300 group flex flex-col h-full relative overflow-hidden"
+      {isLoading ? (
+        <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+        </div>
+      ) : (
+        <motion.div
+            variants={containerVariants}
+            initial="hidden"
+            animate="show"
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+        >
+            {subjects.map((subject: any, index: number) => (
+            <motion.div
+                key={subject.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.1 }}
+                className="h-full"
             >
-              {/* Subtle hover gradient */}
-              <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <Link
+                to={`/subjects/${subject.id}`}
+                className="bg-white p-6 rounded-2xl shadow-sm border border-stone-100 hover:border-indigo-200 hover:shadow-xl transition-all duration-300 group flex flex-col h-full relative overflow-hidden"
+                >
+                <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
-              <div className="relative z-10 flex flex-col h-full">
-                <div className="bg-indigo-50 w-14 h-14 rounded-xl flex items-center justify-center mb-5 group-hover:scale-110 group-hover:bg-indigo-600 transition-all duration-300 shadow-sm">
-                  {subject.icon === 'BookOpen' ? (
-                    <BookOpen className="w-7 h-7 text-indigo-600 group-hover:text-white transition-colors" />
-                  ) : (
-                    <Scale className="w-7 h-7 text-indigo-600 group-hover:text-white transition-colors" />
-                  )}
-                </div>
-                <h2 className="text-xl font-bold mb-3 text-stone-900 group-hover:text-indigo-900 transition-colors line-clamp-2">{subject.name}</h2>
-                <p className="text-stone-500 text-sm flex-1 leading-relaxed line-clamp-3">{subject.description}</p>
+                <div className="relative z-10 flex flex-col h-full">
+                    <div className="bg-indigo-50 w-14 h-14 rounded-xl flex items-center justify-center mb-5 group-hover:scale-110 group-hover:bg-indigo-600 transition-all duration-300 shadow-sm">
+                    {subject.icon === 'BookOpen' ? (
+                        <BookOpen className="w-7 h-7 text-indigo-600 group-hover:text-white transition-colors" />
+                    ) : (
+                        <Scale className="w-7 h-7 text-indigo-600 group-hover:text-white transition-colors" />
+                    )}
+                    </div>
+                    <h2 className="text-xl font-bold mb-3 text-stone-900 group-hover:text-indigo-900 transition-colors line-clamp-2">{subject.name}</h2>
+                    <p className="text-stone-500 text-sm flex-1 leading-relaxed line-clamp-3">{subject.description}</p>
 
-                <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between text-sm font-bold text-indigo-600 group-hover:text-indigo-700">
-                  <span>Ver material completo</span>
-                  <div className="bg-indigo-50 p-2 rounded-lg group-hover:bg-indigo-100 transition-colors">
-                    <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-                  </div>
+                    <div className="mt-6 pt-4 border-t border-stone-100 flex items-center justify-between text-sm font-bold text-indigo-600 group-hover:text-indigo-700">
+                    <span>Ver material completo</span>
+                    <div className="bg-indigo-50 p-2 rounded-lg group-hover:bg-indigo-100 transition-colors">
+                        <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                    </div>
+                    </div>
                 </div>
-              </div>
-            </Link>
-          </motion.div>
-        ))}
-      </motion.div>
+                </Link>
+            </motion.div>
+            ))}
+        </motion.div>
+      )}
     </motion.div>
   );
 }

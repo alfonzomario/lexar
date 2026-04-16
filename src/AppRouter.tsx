@@ -22,6 +22,7 @@ import { SavedForLater } from './pages/SavedForLater';
 import { Simulacro } from './pages/Simulacro';
 import { Normativa } from './pages/Normativa';
 import { NormaDetail } from './pages/NormaDetail';
+import { Profile } from './pages/Profile';
 import { AuthProvider } from './contexts/AuthContext';
 
 export function AppRouter() {
@@ -53,6 +54,7 @@ export function AppRouter() {
             <Route path="simulacro" element={<Simulacro />} />
             <Route path="simulacro/:subjectId" element={<Simulacro />} />
             <Route path="my-notes" element={<MyNotes />} />
+            <Route path="profile" element={<Profile />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -283,6 +283,14 @@ function initDb() {
     );
   `);
 
+  // Migration: add password to users
+  try {
+    db.prepare('SELECT password FROM users LIMIT 1').get();
+  } catch {
+    db.exec('ALTER TABLE users ADD COLUMN password TEXT');
+    console.log('Added users.password column.');
+  }
+
   // Migration: add source to flashcards if missing
   try {
     db.prepare('SELECT source FROM flashcards LIMIT 1').get();

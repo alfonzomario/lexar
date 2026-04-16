@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown } from 'lucide-react';
+import { useState } from 'react';
+import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { useAuth } from '../contexts/AuthContext';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 /**
  * Extracts the Google Drive file ID from various URL formats:
@@ -48,11 +49,9 @@ function isGoogleDriveUrl(url: string): boolean {
 
 export function Notes() {
   const { user } = useAuth();
-  const [notes, setNotes] = useState([]);
-  const [subjects, setSubjects] = useState([]);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
   // Preview modal state
@@ -69,20 +68,52 @@ export function Notes() {
 
   const isPremium = user && ['pro', 'admin', 'super_admin'].includes(user.tier);
 
-  const fetchNotes = () => {
-    fetch('/api/notes')
-      .then((res) => res.json())
-      .then((data) => setNotes(data));
-  };
+  const { data: notes = [], isLoading: isLoadingNotes } = useQuery({
+    queryKey: ['notes'],
+    queryFn: async () => {
+      const res = await fetch('/api/notes');
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    }
+  });
 
-  useEffect(() => {
-    fetchNotes();
-    fetch('/api/subjects')
-      .then((res) => res.json())
-      .then((data) => setSubjects(data));
-  }, []);
+  const { data: subjects = [] } = useQuery({
+    queryKey: ['subjects'],
+    queryFn: async () => {
+      const res = await fetch('/api/subjects');
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    }
+  });
 
-  const handleUploadSubmit = async (e: React.FormEvent) => {
+  const uploadNoteMutation = useMutation({
+    mutationFn: async (noteData: any) => {
+      const response = await fetch('/api/notes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user ? { 'X-User-Id': String(user.id) } : {}),
+        },
+        body: JSON.stringify(noteData),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Fallo al subir el apunte');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      setNewNote({ title: '', file_url: '', description: '', subject_id: '' });
+      setIsModalOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+    onError: (err: any) => {
+      setSubmitError(err.message || 'Error desconocido');
+    }
+  });
+
+  const handleUploadSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError('');
 
@@ -92,37 +123,12 @@ export function Notes() {
       return;
     }
 
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch('/api/notes', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(user ? { 'X-User-Id': String(user.id) } : {}),
-        },
-        body: JSON.stringify({
-          title: newNote.title,
-          file_url: newNote.file_url,
-          description: newNote.description,
-          subject_id: newNote.subject_id,
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Fallo al subir el apunte');
-      }
-
-      // Reset and close
-      setNewNote({ title: '', file_url: '', description: '', subject_id: '' });
-      setIsModalOpen(false);
-      fetchNotes();
-    } catch (err: any) {
-      setSubmitError(err.message || 'Error desconocido');
-    } finally {
-      setIsSubmitting(false);
-    }
+    uploadNoteMutation.mutate({
+      title: newNote.title,
+      file_url: newNote.file_url,
+      description: newNote.description,
+      subject_id: newNote.subject_id,
+    });
   };
 
   const openPreview = async (note: any) => {
@@ -135,7 +141,7 @@ export function Notes() {
         method: 'POST',
         headers: user ? { 'X-User-Id': String(user.id) } : {},
       });
-      fetchNotes();
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
     } catch {}
 
     // Loading ends when iframe fires onLoad, or after timeout
@@ -206,8 +212,13 @@ export function Notes() {
       </div>
 
       {/* Notes Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filtered.map((note: any) => {
+      {isLoadingNotes ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filtered.map((note: any) => {
           const hasPreview = note.file_url && isGoogleDriveUrl(note.file_url);
 
           return (
@@ -292,6 +303,7 @@ export function Notes() {
           </div>
         )}
       </div>
+      )}
 
       {/* ===== UPLOAD MODAL ===== */}
       <AnimatePresence>
@@ -412,10 +424,10 @@ export function Notes() {
                   </button>
                   <button
                     type="submit"
-                    disabled={isSubmitting}
+                    disabled={uploadNoteMutation.isPending}
                     className="flex-1 px-4 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
                   >
-                    {isSubmitting ? 'Subiendo...' : (
+                    {uploadNoteMutation.isPending ? 'Subiendo...' : (
                       <>
                         <Upload className="w-4 h-4" />
                         Publicar Apunte

@@ -14,6 +14,7 @@ export function Layout() {
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -21,6 +22,7 @@ export function Layout() {
 
   const openLoginModal = () => {
     setLoginEmail('');
+    setLoginPassword('');
     setLoginError('');
     setLoginModalOpen(true);
   };
@@ -28,6 +30,7 @@ export function Layout() {
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const email = loginEmail.trim();
+    const password = loginPassword;
     if (!email) {
       setLoginError('Ingresá tu email');
       return;
@@ -35,11 +38,11 @@ export function Layout() {
     setLoginError('');
     setLoginSubmitting(true);
     try {
-      await login(email);
+      await login(email, password);
       setLoginModalOpen(false);
       setMobileMenuOpen(false);
     } catch (err) {
-      setLoginError((err as Error).message || 'No se encontró un usuario con ese email');
+      setLoginError((err as Error).message || 'Credenciales inválidas');
     } finally {
       setLoginSubmitting(false);
     }
@@ -252,6 +255,9 @@ export function Layout() {
                           <p className="text-xs text-stone-500">{user.email}</p>
                         </div>
                         <div className="p-2">
+                          <Link to="/profile" className="flex items-center gap-2 p-2 hover:bg-stone-50 rounded-lg text-sm text-stone-700 transition-colors">
+                            <User className="w-4 h-4 text-stone-400" /> Mi Perfil
+                          </Link>
                           <Link to="/my-notes" className="flex items-center gap-2 p-2 hover:bg-stone-50 rounded-lg text-sm text-stone-700 transition-colors">
                             <PencilLine className="w-4 h-4 text-stone-400" /> Mis Anotaciones
                           </Link>
@@ -426,6 +432,18 @@ export function Layout() {
                     placeholder="ej. admin@lexar.ar"
                     className="w-full border border-stone-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                     autoFocus
+                    disabled={loginSubmitting}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="login-password" className="block text-sm font-medium text-stone-700 mb-1">Contraseña (opcional en demo)</label>
+                  <input
+                    id="login-password"
+                    type="password"
+                    value={loginPassword}
+                    onChange={(e) => { setLoginPassword(e.target.value); setLoginError(''); }}
+                    placeholder="Tu contraseña"
+                    className="w-full border border-stone-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                     disabled={loginSubmitting}
                   />
                 </div>
