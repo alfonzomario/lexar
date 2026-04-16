@@ -550,12 +550,12 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
+        config: { responseMimeType: "application/json" }
       });
       const text = (response.text ?? '').trim();
       let parsed: { front: string; back: string }[];
       try {
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+        parsed = JSON.parse(text);
       } catch {
         parsed = [];
       }
@@ -708,15 +708,15 @@ ${textToAnalyze}
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
+        config: { responseMimeType: "application/json" }
       });
       const resultText = (response.text ?? '').trim();
       let parsed;
       try {
-        // Try to extract JSON from the response (model may add markdown)
-        const jsonMatch = resultText.match(/\{[\s\S]*\}/);
-        parsed = JSON.parse(jsonMatch ? jsonMatch[0] : resultText);
-      } catch {
-        parsed = JSON.parse(resultText.replace(/```json/g, '').replace(/```/g, '').trim());
+        parsed = JSON.parse(resultText);
+      } catch (err) {
+        console.error("JSON parse AI", err);
+        throw err;
       }
       res.json(parsed);
     } catch (e) {

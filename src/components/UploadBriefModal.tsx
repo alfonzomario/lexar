@@ -26,8 +26,8 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
     const [court, setCourt] = useState('');
     const [year, setYear] = useState('');
     const [parties, setParties] = useState('');
-    const [timelineStr, setTimelineStr] = useState('');
-    const [citationsStr, setCitationsStr] = useState('');
+    const [timeline, setTimeline] = useState<any[]>([]);
+    const [citations, setCitations] = useState<any[]>([]);
 
     const [subjects, setSubjects] = useState<any[]>([]);
     const [isSaving, setIsSaving] = useState(false);
@@ -40,7 +40,7 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             setTitle(''); setFacts(''); setIssue(''); setRule('');
             setReasoning(''); setHolding(''); setRelevance(''); setKeywords('');
             setSubjectId(''); setCourt(''); setYear(''); setParties('');
-            setTimelineStr('[]'); setCitationsStr('[]');
+            setTimeline([]); setCitations([]);
         }
     }, [isOpen]);
 
@@ -69,8 +69,8 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             setCourt(data.court || '');
             setYear(data.year ? String(data.year) : '');
             setParties(data.parties || '');
-            setTimelineStr(JSON.stringify(data.timeline || [], null, 2));
-            setCitationsStr(JSON.stringify(data.citations || [], null, 2));
+            setTimeline(Array.isArray(data.timeline) ? data.timeline : []);
+            setCitations(Array.isArray(data.citations) ? data.citations : []);
 
             setStep('review');
         } catch (error) {
@@ -131,8 +131,8 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             setCourt(data.court || '');
             setYear(data.year ? String(data.year) : '');
             setParties(data.parties || '');
-            setTimelineStr(JSON.stringify(data.timeline || [], null, 2));
-            setCitationsStr(JSON.stringify(data.citations || [], null, 2));
+            setTimeline(Array.isArray(data.timeline) ? data.timeline : []);
+            setCitations(Array.isArray(data.citations) ? data.citations : []);
             setStep('review');
         } catch (err) {
             console.error('File upload error:', err);
@@ -146,24 +146,13 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
         if (!title || !subjectId) return;
         setIsSaving(true);
 
-        let timelineParsed = [];
-        let citationsParsed = [];
-        try {
-            if (timelineStr) timelineParsed = JSON.parse(timelineStr);
-            if (citationsStr) citationsParsed = JSON.parse(citationsStr);
-        } catch (e) {
-            alert('Formato JSON inválido en la línea de tiempo o las normas citadas.');
-            setIsSaving(false);
-            return;
-        }
-
         try {
             const res = await fetch('/api/briefs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id: subjectId,
-                    court, year, parties, timeline: timelineParsed, citations: citationsParsed
+                    court, year, parties, timeline, citations
                 })
             });
             if (res.ok) {
@@ -310,16 +299,26 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
                                             <input type="text" value={parties} onChange={e => setParties(e.target.value)} className="w-full p-3 rounded-xl border border-stone-200 outline-none" />
                                         </div>
                                     </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-bold text-stone-700 mb-1">Línea de Tiempo (JSON)</label>
-                                            <textarea value={timelineStr} onChange={e => setTimelineStr(e.target.value)} className="w-full h-32 p-3 rounded-xl border border-stone-200 outline-none resize-y font-mono text-xs text-stone-600" />
+                                    {timeline.length > 0 && (
+                                        <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
+                                            <label className="block text-sm font-bold text-stone-700 mb-2">Hitos Procesales Extraídos</label>
+                                            <ul className="list-disc pl-5 text-sm text-stone-600 space-y-1">
+                                                {timeline.map((item, idx) => (
+                                                    <li key={idx}><span className="font-semibold">{item.date}</span>: {item.description}</li>
+                                                ))}
+                                            </ul>
                                         </div>
-                                        <div>
-                                            <label className="block text-sm font-bold text-stone-700 mb-1">Normativa Citada (JSON)</label>
-                                            <textarea value={citationsStr} onChange={e => setCitationsStr(e.target.value)} className="w-full h-32 p-3 rounded-xl border border-stone-200 outline-none resize-y font-mono text-xs text-stone-600" />
+                                    )}
+                                    {citations.length > 0 && (
+                                        <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
+                                            <label className="block text-sm font-bold text-stone-700 mb-2">Normativa Citada Extraída</label>
+                                            <ul className="list-disc pl-5 text-sm text-stone-600 space-y-1">
+                                                {citations.map((item, idx) => (
+                                                    <li key={idx}><span className="font-semibold">{item.norm_name}</span> ({item.considerando_ref})</li>
+                                                ))}
+                                            </ul>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
 
                                 <div className="flex justify-end gap-3 pt-4 border-t border-stone-100">
