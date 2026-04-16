@@ -4,15 +4,18 @@ import {
   ArrowLeft, Scale, FileText, Share2, Download,
   MessageSquare, BookOpen, Network, Sparkles,
   ChevronRight, ExternalLink, AlertTriangle,
-  Copy, Check
+  Copy, Check, Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import Markdown from 'react-markdown';
 import { BalanzaLoader } from '../components/BalanzaLoader';
+import { HighlightableText } from '../components/HighlightableText';
+import { useAuth } from '../contexts/AuthContext';
 
 export function NormaDetail() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [norma, setNorma] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'texto' | 'relaciones' | 'ia'>('texto');
@@ -22,6 +25,16 @@ export function NormaDetail() {
   const [copied, setCopied] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Annotations
+  const [noteText, setNoteText] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
+  const [savedNotes, setSavedNotes] = useState<any[]>([]);
+
+  // Relations
+  const [relations, setRelations] = useState<{ modifica: any[], modificada_por: any[] }>({ modifica: [], modificada_por: [] });
+  const [relationsLoading, setRelationsLoading] = useState(false);
+
   useEffect(() => {
     fetch(`/api/normas/${id}`)
       .then(res => res.json())
@@ -30,6 +43,30 @@ export function NormaDetail() {
         setLoading(false);
       });
   }, [id]);
+
+  // Load notes
+  useEffect(() => {
+    if (user && id) {
+      fetch(`/api/comments/norma/${id}`)
+        .then(res => res.json())
+        .then(data => setSavedNotes(data))
+        .catch(() => {});
+    }
+  }, [user, id]);
+
+  // Load relations when tab changes
+  useEffect(() => {
+    if (activeTab === 'relaciones' && id && relations.modifica.length === 0 && relations.modificada_por.length === 0) {
+      setRelationsLoading(true);
+      fetch(`/api/normas/${id}/relaciones`)
+        .then(res => res.json())
+        .then(data => {
+          setRelations(data);
+          setRelationsLoading(false);
+        })
+        .catch(() => setRelationsLoading(false));
+    }
+  }, [activeTab, id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -86,12 +123,40 @@ export function NormaDetail() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleSaveNote = async () => {
+    if (!user || !id || !noteText.trim()) return;
+    setNoteSaving(true);
+    try {
+      const res = await fetch(`/api/comments/norma/${id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id),
+        },
+        body: JSON.stringify({ content: noteText.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSavedNotes(prev => [{ id: data.id, content: noteText.trim(), author_name: data.author_name, created_at: new Date().toISOString() }, ...prev]);
+        setNoteText('');
+        setNoteSaved(true);
+        setTimeout(() => setNoteSaved(false), 2000);
+      }
+    } catch (e) {
+      console.error('Error saving note:', e);
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center min-h-[60vh]">
       <BalanzaLoader size="lg" text="Cargando Norma..." />
     </div>
   );
   if (!norma) return <div className="text-center py-20">Norma no encontrada</div>;
+
+  const hasRelations = relations.modifica.length > 0 || relations.modificada_por.length > 0;
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -200,7 +265,24 @@ export function NormaDetail() {
                       </p>
                     </div>
                     <div className="whitespace-pre-wrap font-serif text-lg leading-relaxed text-stone-800">
-                      {norma.texto}
+                      <HighlightableText
+                        text={norma.texto || ''}
+                        annotations={[]}
+                        onAddAnnotation={async (text, note) => {
+                          // Auto-save as a comment/annotation
+                          if (user && id) {
+                            const res = await fetch(`/api/comments/norma/${id}`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json', 'X-User-Id': String(user.id) },
+                              body: JSON.stringify({ content: `📌 "${text}"\n\n${note}` }),
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setSavedNotes(prev => [{ id: data.id, content: `📌 "${text}"\n\n${note}`, author_name: data.author_name, created_at: new Date().toISOString() }, ...prev]);
+                            }
+                          }
+                        }}
+                      />
                     </div>
                   </motion.div>
                 )}
@@ -213,29 +295,71 @@ export function NormaDetail() {
                     exit={{ opacity: 0 }}
                     className="space-y-6"
                   >
-                    <div className="text-center py-12">
-                      <Network className="w-12 h-12 text-stone-300 mx-auto mb-4" />
-                      <h3 className="text-lg font-bold text-stone-900">Grafo de Relaciones</h3>
-                      <p className="text-stone-500 text-sm max-w-sm mx-auto">
-                        Esta funcionalidad permite ver qué leyes modifica esta norma y cuáles la reglamentan.
-                      </p>
-                      <div className="mt-8 grid grid-cols-1 gap-3">
-                        <div className="p-4 rounded-xl border border-stone-100 bg-stone-50 flex items-center justify-between text-left">
-                          <div>
-                            <div className="text-[10px] font-bold text-indigo-600 uppercase">Modifica a</div>
-                            <div className="font-bold text-stone-900">Ley 24.240</div>
-                          </div>
-                          <ChevronRight className="w-4 h-4 text-stone-400" />
-                        </div>
-                        <div className="p-4 rounded-xl border border-stone-100 bg-stone-50 flex items-center justify-between text-left">
-                          <div>
-                            <div className="text-[10px] font-bold text-amber-600 uppercase">Reglamentada por</div>
-                            <div className="font-bold text-stone-900">Decreto 274/2019</div>
-                          </div>
-                          <ChevronRight className="w-4 h-4 text-stone-400" />
-                        </div>
+                    {relationsLoading ? (
+                      <div className="text-center py-12">
+                        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-4" />
+                        <p className="text-stone-500 text-sm">Cargando relaciones...</p>
                       </div>
-                    </div>
+                    ) : hasRelations ? (
+                      <div className="space-y-6">
+                        {relations.modifica.length > 0 && (
+                          <div>
+                            <h3 className="text-sm font-bold text-stone-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                              <span className="w-2 h-2 bg-indigo-500 rounded-full" />
+                              Normas que modifica
+                            </h3>
+                            <div className="grid grid-cols-1 gap-3">
+                              {relations.modifica.map((rel: any, idx: number) => (
+                                <Link
+                                  key={idx}
+                                  to={`/normativa/${rel.destino_id}`}
+                                  className="p-4 rounded-xl border border-stone-100 bg-stone-50 flex items-center justify-between text-left hover:border-indigo-200 hover:bg-indigo-50/30 transition-all"
+                                >
+                                  <div>
+                                    <div className="text-[10px] font-bold text-indigo-600 uppercase">{rel.tipo_relacion || 'Modifica a'}</div>
+                                    <div className="font-bold text-stone-900">{rel.tipo} {rel.numero}/{rel.anio}</div>
+                                    <div className="text-xs text-stone-500 mt-0.5">{rel.titulo}</div>
+                                  </div>
+                                  <ChevronRight className="w-4 h-4 text-stone-400 shrink-0" />
+                                </Link>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {relations.modificada_por.length > 0 && (
+                          <div>
+                            <h3 className="text-sm font-bold text-stone-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                              <span className="w-2 h-2 bg-amber-500 rounded-full" />
+                              Modificada / Reglamentada por
+                            </h3>
+                            <div className="grid grid-cols-1 gap-3">
+                              {relations.modificada_por.map((rel: any, idx: number) => (
+                                <Link
+                                  key={idx}
+                                  to={`/normativa/${rel.origen_id}`}
+                                  className="p-4 rounded-xl border border-stone-100 bg-stone-50 flex items-center justify-between text-left hover:border-amber-200 hover:bg-amber-50/30 transition-all"
+                                >
+                                  <div>
+                                    <div className="text-[10px] font-bold text-amber-600 uppercase">{rel.tipo_relacion || 'Modificada por'}</div>
+                                    <div className="font-bold text-stone-900">{rel.tipo} {rel.numero}/{rel.anio}</div>
+                                    <div className="text-xs text-stone-500 mt-0.5">{rel.titulo}</div>
+                                  </div>
+                                  <ChevronRight className="w-4 h-4 text-stone-400 shrink-0" />
+                                </Link>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-center py-12">
+                        <Network className="w-12 h-12 text-stone-300 mx-auto mb-4" />
+                        <h3 className="text-lg font-bold text-stone-900">Sin relaciones registradas</h3>
+                        <p className="text-stone-500 text-sm max-w-sm mx-auto mt-2">
+                          No se encontraron normas vinculadas en la base de datos. Las relaciones se agregan progresivamente.
+                        </p>
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -341,19 +465,45 @@ export function NormaDetail() {
             </p>
           </div>
 
-          {/* Quick Actions Card */}
+          {/* Annotations Card — Connected to API */}
           <div className="bg-white rounded-3xl p-6 border border-stone-200 shadow-sm">
             <h4 className="font-bold text-stone-900 mb-4 flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-indigo-600" />
               Anotaciones
             </h4>
             <textarea
-              placeholder="Escribí una nota privada sobre esta norma..."
-              className="w-full p-3 bg-stone-50 border border-stone-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[100px] mb-4"
+              placeholder={user ? "Escribí una nota privada sobre esta norma..." : "Inicia sesión para guardar notas"}
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              disabled={!user}
+              className="w-full p-3 bg-stone-50 border border-stone-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[100px] mb-4 disabled:opacity-50"
             />
-            <button className="w-full py-2 bg-stone-900 text-white rounded-xl font-bold text-sm hover:bg-stone-800 transition-colors">
-              Guardar Nota
+            <button
+              onClick={handleSaveNote}
+              disabled={!user || !noteText.trim() || noteSaving}
+              className="w-full py-2 bg-stone-900 text-white rounded-xl font-bold text-sm hover:bg-stone-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {noteSaved ? (
+                <><Check className="w-4 h-4 text-emerald-400" /> Guardada</>
+              ) : noteSaving ? (
+                'Guardando...'
+              ) : (
+                'Guardar Nota'
+              )}
             </button>
+
+            {/* Saved Notes */}
+            {savedNotes.length > 0 && (
+              <div className="mt-4 space-y-3 max-h-[300px] overflow-y-auto">
+                <p className="text-xs font-bold text-stone-500 uppercase tracking-wider">Notas guardadas</p>
+                {savedNotes.map((note: any) => (
+                  <div key={note.id} className="p-3 bg-stone-50 rounded-lg border border-stone-100 text-sm text-stone-700 whitespace-pre-wrap">
+                    {note.content}
+                    <p className="text-[10px] text-stone-400 mt-2">{new Date(note.created_at).toLocaleDateString('es-AR')}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

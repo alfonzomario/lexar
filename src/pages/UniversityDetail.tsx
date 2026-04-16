@@ -1,14 +1,33 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router';
-import { GraduationCap, BookOpen, MapPin, ExternalLink, X, School, ArrowLeft } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { GraduationCap, BookOpen, MapPin, ExternalLink, School, ArrowLeft, MessageSquare, User, Send, Loader2 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { clsx } from 'clsx';
+import { useAuth } from '../contexts/AuthContext';
+
+function timeAgo(dateStr: string) {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
+  if (diff < 60) return 'Hace un momento';
+  if (diff < 3600) return `Hace ${Math.floor(diff / 60)} min`;
+  if (diff < 86400) return `Hace ${Math.floor(diff / 3600)} hs`;
+  if (diff < 604800) return `Hace ${Math.floor(diff / 86400)} días`;
+  return date.toLocaleDateString('es-AR');
+}
 
 export function UniversityDetail() {
   const { uniId } = useParams();
+  const { user } = useAuth();
   const [university, setUniversity] = useState<any>(null);
   const [studyPlan, setStudyPlan] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Comments
+  const [comments, setComments] = useState<any[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [submittingComment, setSubmittingComment] = useState(false);
 
   useEffect(() => {
     if (!uniId) return;
@@ -26,6 +45,50 @@ export function UniversityDetail() {
       setIsLoading(false);
     });
   }, [uniId]);
+
+  // Load comments
+  useEffect(() => {
+    if (!uniId) return;
+    setCommentsLoading(true);
+    fetch(`/api/comments/university/${uniId}`)
+      .then(res => res.json())
+      .then(data => {
+        setComments(data);
+        setCommentsLoading(false);
+      })
+      .catch(() => setCommentsLoading(false));
+  }, [uniId]);
+
+  const handleSubmitComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !uniId || !newComment.trim()) return;
+    setSubmittingComment(true);
+    try {
+      const res = await fetch(`/api/comments/university/${uniId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id),
+        },
+        body: JSON.stringify({ content: newComment.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setComments(prev => [{
+          id: data.id,
+          content: newComment.trim(),
+          author_name: data.author_name,
+          author_role: data.author_role,
+          created_at: new Date().toISOString(),
+        }, ...prev]);
+        setNewComment('');
+      }
+    } catch (e) {
+      console.error('Error posting comment:', e);
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -154,6 +217,85 @@ export function UniversityDetail() {
             <GraduationCap className="w-16 h-16 text-stone-300 mx-auto mb-4" />
             <h3 className="text-xl font-bold text-stone-700 mb-2">Plan no disponible digitalmente</h3>
             <p className="text-stone-500 max-w-sm mx-auto">No tenemos cargada la grilla interactiva para esta facultad todavía.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Comments Section */}
+      <div className="bg-white p-8 rounded-3xl shadow-sm border border-stone-200">
+        <div className="flex items-center gap-4 mb-6 pb-4 border-b border-stone-100">
+          <div className="bg-amber-100 p-3 rounded-2xl">
+            <MessageSquare className="w-8 h-8 text-amber-600" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-stone-900" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+              Comentarios y Opiniones
+            </h2>
+            <p className="text-stone-500 text-sm">Compartí tu experiencia sobre materias, cátedras y profesores de esta facultad.</p>
+          </div>
+        </div>
+
+        {/* Comment Form */}
+        {user ? (
+          <form onSubmit={handleSubmitComment} className="mb-8">
+            <div className="flex gap-3">
+              <div className="bg-stone-100 w-10 h-10 rounded-full flex items-center justify-center shrink-0 mt-1">
+                <User className="w-5 h-5 text-stone-500" />
+              </div>
+              <div className="flex-1">
+                <textarea
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  placeholder="Compartí tu experiencia, opinión sobre una cátedra o profesor..."
+                  rows={3}
+                  className="w-full p-4 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white resize-none transition-all"
+                />
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="submit"
+                    disabled={!newComment.trim() || submittingComment}
+                    className="bg-amber-600 text-white px-5 py-2 rounded-xl font-bold hover:bg-amber-700 transition-colors disabled:opacity-50 flex items-center gap-2 text-sm"
+                  >
+                    <Send className="w-4 h-4" />
+                    {submittingComment ? 'Enviando...' : 'Comentar'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+        ) : (
+          <div className="text-center py-6 mb-6 bg-stone-50 rounded-xl border border-stone-200 border-dashed">
+            <p className="text-stone-500 text-sm">Iniciá sesión para dejar un comentario.</p>
+          </div>
+        )}
+
+        {/* Comments List */}
+        {commentsLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 text-amber-600 animate-spin" />
+          </div>
+        ) : comments.length > 0 ? (
+          <div className="space-y-4">
+            {comments.map((comment: any) => (
+              <div key={comment.id} className="flex gap-3">
+                <div className="bg-stone-100 w-9 h-9 rounded-full flex items-center justify-center shrink-0 mt-1">
+                  <User className="w-4 h-4 text-stone-500" />
+                </div>
+                <div className="flex-1 bg-stone-50 p-4 rounded-xl border border-stone-100">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="font-bold text-stone-900 text-sm">{comment.author_name}</span>
+                    <span className="text-[10px] bg-stone-200 text-stone-600 px-1.5 py-0.5 rounded">{comment.author_role}</span>
+                    <span className="text-xs text-stone-400">• {timeAgo(comment.created_at)}</span>
+                  </div>
+                  <p className="text-stone-700 text-sm leading-relaxed whitespace-pre-wrap">{comment.content}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-stone-400">
+            <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Sé el primero en dejar un comentario sobre esta universidad.</p>
           </div>
         )}
       </div>

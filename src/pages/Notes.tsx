@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2 } from 'lucide-react';
+import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2, School, Calendar, Filter, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { useAuth } from '../contexts/AuthContext';
@@ -54,6 +54,12 @@ export function Notes() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
+  // Filters
+  const [filterUniversityId, setFilterUniversityId] = useState('');
+  const [filterYear, setFilterYear] = useState('');
+  const [filterSubjectId, setFilterSubjectId] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+
   // Preview modal state
   const [previewNote, setPreviewNote] = useState<any>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -63,15 +69,21 @@ export function Notes() {
     title: '',
     file_url: '',
     description: '',
-    subject_id: ''
+    subject_id: '',
+    university_id: '',
+    year: '',
   });
 
   const isPremium = user && ['pro', 'admin', 'super_admin'].includes(user.tier);
 
   const { data: notes = [], isLoading: isLoadingNotes } = useQuery({
-    queryKey: ['notes'],
+    queryKey: ['notes', filterSubjectId, filterUniversityId, filterYear],
     queryFn: async () => {
-      const res = await fetch('/api/notes');
+      const params = new URLSearchParams();
+      if (filterSubjectId) params.append('subject_id', filterSubjectId);
+      if (filterUniversityId) params.append('university_id', filterUniversityId);
+      if (filterYear) params.append('year', filterYear);
+      const res = await fetch(`/api/notes?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to fetch');
       return res.json();
     }
@@ -81,6 +93,15 @@ export function Notes() {
     queryKey: ['subjects'],
     queryFn: async () => {
       const res = await fetch('/api/subjects');
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    }
+  });
+
+  const { data: universities = [] } = useQuery({
+    queryKey: ['universities'],
+    queryFn: async () => {
+      const res = await fetch('/api/universities');
       if (!res.ok) throw new Error('Failed to fetch');
       return res.json();
     }
@@ -104,7 +125,7 @@ export function Notes() {
       return response.json();
     },
     onSuccess: () => {
-      setNewNote({ title: '', file_url: '', description: '', subject_id: '' });
+      setNewNote({ title: '', file_url: '', description: '', subject_id: '', university_id: '', year: '' });
       setIsModalOpen(false);
       queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
@@ -128,6 +149,8 @@ export function Notes() {
       file_url: newNote.file_url,
       description: newNote.description,
       subject_id: newNote.subject_id,
+      university_id: newNote.university_id || null,
+      year: newNote.year ? parseInt(newNote.year, 10) : null,
     });
   };
 
@@ -199,16 +222,119 @@ export function Notes() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative w-full">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400" />
-        <input
-          type="text"
-          placeholder="Buscar por materia, título o autor..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full pl-12 pr-4 py-4 bg-white border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all shadow-sm text-lg"
-        />
+      {/* Search and Filters */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400" />
+            <input
+              type="text"
+              placeholder="Buscar por materia, título o autor..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-12 pr-4 py-4 bg-white border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all shadow-sm text-lg"
+            />
+          </div>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={clsx(
+              "p-4 rounded-2xl border transition-all shrink-0",
+              showFilters || filterUniversityId || filterYear || filterSubjectId
+                ? "bg-emerald-50 border-emerald-200 text-emerald-600"
+                : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50"
+            )}
+          >
+            <Filter className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Filter Panel */}
+        <AnimatePresence>
+          {showFilters && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-stone-900 flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-emerald-600" />
+                    Filtros Avanzados
+                  </h3>
+                  {(filterUniversityId || filterYear || filterSubjectId) && (
+                    <button
+                      onClick={() => { setFilterUniversityId(''); setFilterYear(''); setFilterSubjectId(''); }}
+                      className="text-sm text-red-500 hover:text-red-600 font-medium flex items-center gap-1"
+                    >
+                      <X className="w-3.5 h-3.5" /> Limpiar filtros
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Materia */}
+                  <div>
+                    <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5">Materia</label>
+                    <div className="relative">
+                      <select
+                        value={filterSubjectId}
+                        onChange={(e) => setFilterSubjectId(e.target.value)}
+                        className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent appearance-none text-sm"
+                      >
+                        <option value="">Todas las materias</option>
+                        {subjects.map((s: any) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-stone-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  {/* Universidad */}
+                  <div>
+                    <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <School className="w-3.5 h-3.5" /> Universidad
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={filterUniversityId}
+                        onChange={(e) => setFilterUniversityId(e.target.value)}
+                        className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent appearance-none text-sm"
+                      >
+                        <option value="">Todas las universidades</option>
+                        {universities.map((u: any) => (
+                          <option key={u.id} value={u.id}>{u.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-stone-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  {/* Año */}
+                  <div>
+                    <label className="block text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5" /> Año
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={filterYear}
+                        onChange={(e) => setFilterYear(e.target.value)}
+                        className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent appearance-none text-sm"
+                      >
+                        <option value="">Todos los años</option>
+                        {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-stone-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Notes Grid */}
@@ -243,9 +369,18 @@ export function Notes() {
               </h2>
 
               {/* Subject */}
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-700 mb-4">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-700 mb-2">
                 <span className="bg-emerald-100/50 px-2.5 py-1 rounded-md">{note.subject_name}</span>
               </div>
+
+              {/* University badge */}
+              {note.university_name && (
+                <div className="flex items-center gap-1.5 text-xs text-stone-500 mb-3">
+                  <School className="w-3 h-3 text-stone-400" />
+                  <span>{note.university_name}</span>
+                  {note.year && <span className="text-stone-400">· {note.year}</span>}
+                </div>
+              )}
 
               {/* Description or content preview */}
               <p className="text-stone-500 text-sm flex-1 line-clamp-3 mb-6 leading-relaxed" style={{ fontFamily: "'Lora', Georgia, serif" }}>
@@ -371,6 +506,42 @@ export function Notes() {
                     <option value="" disabled>Seleccioná una materia...</option>
                     {subjects.map((s: any) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Universidad */}
+                <div className="space-y-1.5">
+                  <label htmlFor="note-university" className="block text-sm font-bold text-stone-700">
+                    Universidad <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <select
+                    id="note-university"
+                    value={newNote.university_id}
+                    onChange={(e) => setNewNote({ ...newNote, university_id: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all appearance-none"
+                  >
+                    <option value="">Sin especificar</option>
+                    {universities.map((u: any) => (
+                      <option key={u.id} value={u.id}>{u.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Año */}
+                <div className="space-y-1.5">
+                  <label htmlFor="note-year" className="block text-sm font-bold text-stone-700">
+                    Año <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <select
+                    id="note-year"
+                    value={newNote.year}
+                    onChange={(e) => setNewNote({ ...newNote, year: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all appearance-none"
+                  >
+                    <option value="">Sin especificar</option>
+                    {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => (
+                      <option key={y} value={y}>{y}</option>
                     ))}
                   </select>
                 </div>

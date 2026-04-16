@@ -600,13 +600,35 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
 
   // Case Briefs
   app.get('/api/briefs', (req, res) => {
-    const briefs = db.prepare(`
+    const { tribunal, year, tema } = req.query;
+    let query = `
       SELECT case_briefs.*, GROUP_CONCAT(subjects.name) as subject_names, GROUP_CONCAT(subjects.id) as subject_ids
       FROM case_briefs
       LEFT JOIN case_brief_subjects ON case_briefs.id = case_brief_subjects.case_brief_id
       LEFT JOIN subjects ON case_brief_subjects.subject_id = subjects.id
-      GROUP BY case_briefs.id
-    `).all();
+    `;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (tribunal && typeof tribunal === 'string' && tribunal.trim()) {
+      conditions.push('case_briefs.court LIKE ?');
+      params.push(`%${tribunal.trim()}%`);
+    }
+    if (year && !isNaN(Number(year))) {
+      conditions.push('case_briefs.year = ?');
+      params.push(Number(year));
+    }
+    if (tema && typeof tema === 'string' && tema.trim()) {
+      conditions.push('case_briefs.keywords LIKE ?');
+      params.push(`%${tema.trim()}%`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    query += ' GROUP BY case_briefs.id';
+
+    const briefs = db.prepare(query).all(...params);
     res.json(briefs);
   });
 
@@ -727,7 +749,7 @@ ${textToAnalyze}
 
   // Create new Case Brief
   app.post('/api/briefs', (req, res) => {
-    const { title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id, court, year, parties, timeline, citations } = req.body;
+    const { title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id, court, year, parties, timeline, citations, full_text } = req.body;
 
     if (!title || !subject_id) {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
@@ -735,9 +757,9 @@ ${textToAnalyze}
 
     try {
       const result = db.prepare(`
-        INSERT INTO case_briefs (title, facts, issue, rule, reasoning, holding, relevance, keywords, is_demo, court, year, parties, timeline, citations) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
-      `).run(title, facts, issue, rule, reasoning, holding, relevance, keywords, court || null, year ? Number(year) : null, parties || null, timeline ? JSON.stringify(timeline) : null, citations ? JSON.stringify(citations) : null);
+        INSERT INTO case_briefs (title, facts, issue, rule, reasoning, holding, relevance, keywords, is_demo, court, year, parties, timeline, citations, full_text) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+      `).run(title, facts, issue, rule, reasoning, holding, relevance, keywords, court || null, year ? Number(year) : null, parties || null, timeline ? JSON.stringify(timeline) : null, citations ? JSON.stringify(citations) : null, full_text || null);
 
       const insertRelation = db.prepare('INSERT INTO case_brief_subjects (case_brief_id, subject_id) VALUES (?, ?)');
       insertRelation.run(result.lastInsertRowid, subject_id);
@@ -856,14 +878,201 @@ ${textToAnalyze}
 
   // Latinisms
   app.get('/api/latinisms', (req, res) => {
-    const latinisms = db.prepare('SELECT * FROM latinisms').all();
-    res.json(latinisms);
+    const userId = getUserId(req);
+    if (userId) {
+      const latinisms = db.prepare(`
+        SELECT l.*, CASE WHEN sl.user_id IS NOT NULL THEN 1 ELSE 0 END as saved
+        FROM latinisms l
+        LEFT JOIN saved_latinisms sl ON l.id = sl.latinism_id AND sl.user_id = ?
+      `).all(userId);
+      res.json(latinisms);
+    } else {
+      const latinisms = db.prepare('SELECT *, 0 as saved FROM latinisms').all();
+      res.json(latinisms);
+    }
+  });
+
+  app.post('/api/latinisms/:id/save', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const latinismId = req.params.id;
+    const now = new Date().toISOString();
+    try {
+      db.prepare('INSERT OR IGNORE INTO saved_latinisms (user_id, latinism_id, created_at) VALUES (?, ?, ?)').run(userId, latinismId, now);
+      res.json({ success: true, saved: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al guardar' });
+    }
+  });
+
+  app.delete('/api/latinisms/:id/save', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    db.prepare('DELETE FROM saved_latinisms WHERE user_id = ? AND latinism_id = ?').run(userId, req.params.id);
+    res.json({ success: true, saved: false });
   });
 
   // News
   app.get('/api/news', (req, res) => {
-    const news = db.prepare('SELECT * FROM news ORDER BY date DESC').all();
+    const q = req.query.q;
+    const tag = req.query.tag;
+    let query = 'SELECT * FROM news';
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (q && typeof q === 'string') {
+      conditions.push('(title LIKE ? OR summary LIKE ?)');
+      const search = `%${q}%`;
+      params.push(search, search);
+    }
+    if (tag && typeof tag === 'string') {
+      conditions.push('tags LIKE ?');
+      params.push(`%${tag}%`);
+    }
+    if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+    query += ' ORDER BY date DESC';
+    const news = db.prepare(query).all(...params);
     res.json(news);
+  });
+
+  // Holidays
+  app.get('/api/holidays', (req, res) => {
+    const holidays = db.prepare('SELECT date, description FROM holiday_calendar ORDER BY date ASC').all();
+    res.json(holidays);
+  });
+
+  // Normativa Relations (real data from DB)
+  app.get('/api/normas/:id/relaciones', (req, res) => {
+    const normaId = req.params.id;
+    // Get relations where this norma is origin or destination
+    const asOrigin = db.prepare(`
+      SELECT rn.*, n.titulo, n.tipo, n.numero, n.anio
+      FROM relaciones_normativas rn
+      JOIN normas n ON rn.destino_id = n.id
+      WHERE rn.origen_id = ?
+    `).all(normaId);
+    const asDestino = db.prepare(`
+      SELECT rn.*, n.titulo, n.tipo, n.numero, n.anio
+      FROM relaciones_normativas rn
+      JOIN normas n ON rn.origen_id = n.id
+      WHERE rn.destino_id = ?
+    `).all(normaId);
+    res.json({ modifica: asOrigin, modificada_por: asDestino });
+  });
+
+  // Forum Topics
+  app.get('/api/forum/topics', (req, res) => {
+    const category = req.query.category;
+    let query = `
+      SELECT ft.*, u.name as author_name, u.profile_role as author_role, s.name as subject_name,
+        (SELECT COUNT(*) FROM forum_replies WHERE topic_id = ft.id) as reply_count
+      FROM forum_topics ft
+      JOIN users u ON ft.author_id = u.id
+      LEFT JOIN subjects s ON ft.subject_id = s.id
+    `;
+    const params: any[] = [];
+    if (category && typeof category === 'string' && category !== 'all') {
+      query += ' WHERE ft.category = ?';
+      params.push(category);
+    }
+    query += ' ORDER BY ft.pinned DESC, ft.updated_at DESC';
+    const topics = db.prepare(query).all(...params);
+    res.json(topics);
+  });
+
+  app.get('/api/forum/topics/:id', (req, res) => {
+    const topic = db.prepare(`
+      SELECT ft.*, u.name as author_name, u.profile_role as author_role, s.name as subject_name
+      FROM forum_topics ft
+      JOIN users u ON ft.author_id = u.id
+      LEFT JOIN subjects s ON ft.subject_id = s.id
+      WHERE ft.id = ?
+    `).get(req.params.id);
+    if (!topic) return res.status(404).json({ error: 'Tema no encontrado' });
+    // Increment views
+    db.prepare('UPDATE forum_topics SET views = views + 1 WHERE id = ?').run(req.params.id);
+    res.json(topic);
+  });
+
+  app.post('/api/forum/topics', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const { title, content, subject_id, category } = req.body;
+    if (!title || typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'Título obligatorio' });
+    const now = new Date().toISOString();
+    try {
+      const result = db.prepare(
+        'INSERT INTO forum_topics (title, content, author_id, subject_id, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(title.trim(), content?.trim() || null, userId, subject_id || null, category || 'general', now, now);
+      res.status(201).json({ success: true, id: result.lastInsertRowid });
+    } catch (e) {
+      console.error('Error creating topic:', e);
+      res.status(500).json({ error: 'Error al crear el tema' });
+    }
+  });
+
+  // Forum Replies
+  app.get('/api/forum/topics/:id/replies', (req, res) => {
+    const replies = db.prepare(`
+      SELECT fr.*, u.name as author_name, u.profile_role as author_role
+      FROM forum_replies fr
+      JOIN users u ON fr.author_id = u.id
+      WHERE fr.topic_id = ?
+      ORDER BY fr.created_at ASC
+    `).all(req.params.id);
+    res.json(replies);
+  });
+
+  app.post('/api/forum/topics/:id/replies', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const topicId = req.params.id;
+    const { content } = req.body;
+    if (!content || typeof content !== 'string' || !content.trim()) return res.status(400).json({ error: 'Contenido obligatorio' });
+    const topic = db.prepare('SELECT id FROM forum_topics WHERE id = ?').get(topicId);
+    if (!topic) return res.status(404).json({ error: 'Tema no encontrado' });
+    const now = new Date().toISOString();
+    try {
+      const result = db.prepare(
+        'INSERT INTO forum_replies (topic_id, author_id, content, created_at) VALUES (?, ?, ?, ?)'
+      ).run(topicId, userId, content.trim(), now);
+      db.prepare('UPDATE forum_topics SET updated_at = ? WHERE id = ?').run(now, topicId);
+      const user = db.prepare('SELECT name, profile_role FROM users WHERE id = ?').get(userId) as any;
+      res.status(201).json({ success: true, id: result.lastInsertRowid, author_name: user?.name, author_role: user?.profile_role });
+    } catch (e) {
+      console.error('Error creating reply:', e);
+      res.status(500).json({ error: 'Error al responder' });
+    }
+  });
+
+  // Comments (for universities, notes, etc.)
+  app.get('/api/comments/:resourceType/:resourceId', (req, res) => {
+    const { resourceType, resourceId } = req.params;
+    const comments = db.prepare(`
+      SELECT c.*, u.name as author_name, u.profile_role as author_role
+      FROM comments c
+      JOIN users u ON c.user_id = u.id
+      WHERE c.resource_type = ? AND c.resource_id = ?
+      ORDER BY c.created_at DESC
+    `).all(resourceType, resourceId);
+    res.json(comments);
+  });
+
+  app.post('/api/comments/:resourceType/:resourceId', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const { resourceType, resourceId } = req.params;
+    const { content } = req.body;
+    if (!content || typeof content !== 'string' || !content.trim()) return res.status(400).json({ error: 'Contenido obligatorio' });
+    const now = new Date().toISOString();
+    try {
+      const result = db.prepare(
+        'INSERT INTO comments (user_id, resource_type, resource_id, content, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(userId, resourceType, Number(resourceId), content.trim(), now);
+      const user = db.prepare('SELECT name, profile_role FROM users WHERE id = ?').get(userId) as any;
+      res.status(201).json({ success: true, id: result.lastInsertRowid, author_name: user?.name, author_role: user?.profile_role });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al comentar' });
+    }
   });
 
   // Bibliography
@@ -989,14 +1198,31 @@ ${textToAnalyze}
 
   // Student Notes
   app.get('/api/notes', (req, res) => {
-    const notes = db.prepare(`
-      SELECT student_notes.*, users.name as author_name, subjects.name as subject_name 
+    const { subject_id, university_id, year: yearParam } = req.query;
+    let query = `
+      SELECT student_notes.*, users.name as author_name, subjects.name as subject_name,
+        universities.name as university_name
       FROM student_notes 
       JOIN users ON student_notes.author_id = users.id
       JOIN subjects ON student_notes.subject_id = subjects.id
+      LEFT JOIN universities ON student_notes.university_id = universities.id
       WHERE student_notes.status = 'published'
-      ORDER BY student_notes.views DESC
-    `).all();
+    `;
+    const params: any[] = [];
+    if (subject_id && !isNaN(Number(subject_id))) {
+      query += ' AND student_notes.subject_id = ?';
+      params.push(Number(subject_id));
+    }
+    if (university_id && !isNaN(Number(university_id))) {
+      query += ' AND student_notes.university_id = ?';
+      params.push(Number(university_id));
+    }
+    if (yearParam && !isNaN(Number(yearParam))) {
+      query += ' AND student_notes.year = ?';
+      params.push(Number(yearParam));
+    }
+    query += ' ORDER BY student_notes.views DESC';
+    const notes = db.prepare(query).all(...params);
     res.json(notes);
   });
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
-import { Newspaper, PenTool, MessageSquare, AlertCircle } from 'lucide-react';
+import { Newspaper, PenTool, MessageSquare, AlertCircle, Search, Tag, X, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
 import { useAuth } from '../contexts/AuthContext';
@@ -10,13 +10,50 @@ export function Articles() {
   const [activeTab, setActiveTab] = useState<'news' | 'articles' | 'submit'>('news');
   const [news, setNews] = useState<any[]>([]);
   const [articles, setArticles] = useState<any[]>([]);
+  const [newsSearch, setNewsSearch] = useState('');
+  const [activeTag, setActiveTag] = useState('');
+  const [newsLoading, setNewsLoading] = useState(false);
 
   const canPublish = user && (user.tier === 'basic' || user.tier === 'pro' || user.tier === 'admin' || user.tier === 'super_admin');
 
+  const fetchNews = (q = '', tag = '') => {
+    setNewsLoading(true);
+    const params = new URLSearchParams();
+    if (q) params.append('q', q);
+    if (tag) params.append('tag', tag);
+    fetch(`/api/news?${params.toString()}`)
+      .then(res => res.json())
+      .then(data => {
+        setNews(data);
+        setNewsLoading(false);
+      })
+      .catch(() => setNewsLoading(false));
+  };
+
   useEffect(() => {
-    fetch('/api/news').then(res => res.json()).then(setNews);
+    fetchNews();
     fetch('/api/articles').then(res => res.json()).then(setArticles);
   }, []);
+
+  const handleNewsSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchNews(newsSearch, activeTag);
+  };
+
+  const handleTagClick = (tag: string) => {
+    if (activeTag === tag) {
+      setActiveTag('');
+      fetchNews(newsSearch, '');
+    } else {
+      setActiveTag(tag);
+      fetchNews(newsSearch, tag);
+    }
+  };
+
+  // Extract all unique tags from news
+  const allTags = [...new Set(news.flatMap((item: any) => 
+    item.tags?.split(',').map((t: string) => t.trim()).filter(Boolean) || []
+  ))];
 
   return (
     <motion.div
@@ -69,24 +106,92 @@ export function Articles() {
       </div>
 
       {activeTab === 'news' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {news.map((item) => (
-            <a
-              key={item.id}
-              href={item.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-amber-300 hover:shadow-md transition-all flex flex-col"
+        <div className="space-y-6">
+          {/* Search bar */}
+          <form onSubmit={handleNewsSearch} className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Buscar noticias..."
+                value={newsSearch}
+                onChange={(e) => setNewsSearch(e.target.value)}
+                className="w-full pl-10 pr-4 py-3 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+              />
+            </div>
+            <button
+              type="submit"
+              className="bg-amber-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-amber-700 transition-colors shrink-0"
             >
-              <div className="flex items-center gap-2 text-xs font-medium text-amber-600 mb-3">
-                <span className="bg-amber-50 px-2 py-1 rounded-md">{item.source}</span>
-                <span className="text-stone-400">{new Date(item.date).toLocaleDateString('es-AR')}</span>
-              </div>
-              <h3 className="text-xl font-bold text-stone-900 mb-2">{item.title}</h3>
-              <p className="text-stone-500 text-sm mb-4 flex-1">{item.summary}</p>
-              <span className="text-sm font-medium text-amber-600 mt-auto">Leer en fuente original &rarr;</span>
-            </a>
-          ))}
+              Buscar
+            </button>
+          </form>
+
+          {/* Tags */}
+          {allTags.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <span className="text-xs font-bold text-stone-500 uppercase tracking-wider self-center mr-1">
+                <Tag className="w-3.5 h-3.5 inline" /> Etiquetas:
+              </span>
+              {allTags.map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => handleTagClick(tag)}
+                  className={clsx(
+                    "px-3 py-1 rounded-full text-xs font-medium transition-all border",
+                    activeTag === tag
+                      ? "bg-amber-600 text-white border-amber-600"
+                      : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                  )}
+                >
+                  {tag}
+                  {activeTag === tag && <X className="w-3 h-3 inline ml-1" />}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {newsLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 text-amber-600 animate-spin" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {news.map((item: any) => (
+                <a
+                  key={item.id}
+                  href={item.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-amber-300 hover:shadow-md transition-all flex flex-col"
+                >
+                  <div className="flex items-center gap-2 text-xs font-medium text-amber-600 mb-3">
+                    <span className="bg-amber-50 px-2 py-1 rounded-md">{item.source}</span>
+                    <span className="text-stone-400">{new Date(item.date).toLocaleDateString('es-AR')}</span>
+                  </div>
+                  <h3 className="text-xl font-bold text-stone-900 mb-2">{item.title}</h3>
+                  <p className="text-stone-500 text-sm mb-4 flex-1">{item.summary}</p>
+                  {/* Tags */}
+                  {item.tags && (
+                    <div className="flex flex-wrap gap-1.5 mb-4">
+                      {item.tags.split(',').map((tag: string, idx: number) => (
+                        <span key={idx} className="bg-stone-100 text-stone-600 text-[10px] font-semibold px-2 py-0.5 rounded-md uppercase tracking-wider">
+                          {tag.trim()}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <span className="text-sm font-medium text-amber-600 mt-auto">Leer en fuente original &rarr;</span>
+                </a>
+              ))}
+              {news.length === 0 && (
+                <div className="col-span-full text-center py-12 text-stone-500 bg-white rounded-2xl border border-stone-200 border-dashed">
+                  <Newspaper className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                  <p>No se encontraron noticias{newsSearch ? ` para "${newsSearch}"` : ''}.</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -99,7 +204,7 @@ export function Articles() {
               <button onClick={() => setActiveTab('submit')} className="text-amber-600 font-medium mt-2">¡Sé el primero en publicar!</button>
             </div>
           ) : (
-            articles.map((article) => (
+            articles.map((article: any) => (
               <div key={article.id} className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-200">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="bg-stone-100 w-10 h-10 rounded-full flex items-center justify-center font-bold text-stone-500">

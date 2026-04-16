@@ -257,7 +257,8 @@ function initDb() {
       country TEXT,
       synopsis TEXT,
       legal_themes TEXT,
-      link TEXT
+      link TEXT,
+      poster_url TEXT
     );
 
     CREATE TABLE IF NOT EXISTS private_notes (
@@ -280,6 +281,50 @@ function initDb() {
       created_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id),
       FOREIGN KEY (brief_id) REFERENCES case_briefs(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS forum_topics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      content TEXT,
+      author_id INTEGER NOT NULL,
+      subject_id INTEGER,
+      category TEXT DEFAULT 'general',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      views INTEGER DEFAULT 0,
+      pinned INTEGER DEFAULT 0,
+      FOREIGN KEY (author_id) REFERENCES users(id),
+      FOREIGN KEY (subject_id) REFERENCES subjects(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS forum_replies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      topic_id INTEGER NOT NULL,
+      author_id INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (topic_id) REFERENCES forum_topics(id),
+      FOREIGN KEY (author_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS saved_latinisms (
+      user_id INTEGER NOT NULL,
+      latinism_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, latinism_id),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (latinism_id) REFERENCES latinisms(id)
     );
   `);
 
@@ -435,6 +480,30 @@ function initDb() {
     console.log('Added court, year, parties, timeline, citations columns to case_briefs.');
   }
 
+  // Migration: add full_text to case_briefs for the complete ruling text
+  try {
+    db.prepare('SELECT full_text FROM case_briefs LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE case_briefs ADD COLUMN full_text TEXT");
+    console.log('Added case_briefs.full_text column.');
+  }
+
+  // Migration: add tags to news
+  try {
+    db.prepare('SELECT tags FROM news LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE news ADD COLUMN tags TEXT");
+    console.log('Added news.tags column.');
+  }
+
+  // Migration: add poster_url to legal_movies
+  try {
+    db.prepare('SELECT poster_url FROM legal_movies LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE legal_movies ADD COLUMN poster_url TEXT");
+    console.log('Added legal_movies.poster_url column.');
+  }
+
   // Seed data if empty
   const subjectCount = db.prepare('SELECT COUNT(*) as count FROM subjects').get() as { count: number };
   if (subjectCount.count === 0) {
@@ -564,10 +633,10 @@ function seedDb() {
   insertLatinism.run('In dubio pro reo', 'En la duda, a favor del reo', 'Principio penal que establece que en caso de duda, se debe fallar a favor del acusado.', 'Ante la falta de pruebas concluyentes, se aplicó el principio in dubio pro reo.');
   insertLatinism.run('Pacta sunt servanda', 'Los pactos deben cumplirse', 'Principio fundamental del derecho de los contratos.', 'Las partes están obligadas por el principio pacta sunt servanda.');
 
-  // News
-  const insertNews = db.prepare('INSERT INTO news (title, summary, source, link, date) VALUES (?, ?, ?, ?, ?)');
-  insertNews.run('Nueva acordada de la CSJN sobre notificaciones electrónicas', 'La Corte Suprema actualizó el reglamento para el uso del sistema de notificaciones electrónicas.', 'CSJN', 'https://www.csjn.gov.ar', '2026-02-25');
-  insertNews.run('Reforma al Código Procesal Civil y Comercial', 'Se debate en el Congreso un proyecto para agilizar los procesos civiles.', 'Boletín Oficial', 'https://www.boletinoficial.gob.ar', '2026-02-20');
+  // News (with tags)
+  const insertNews = db.prepare('INSERT INTO news (title, summary, source, link, date, tags) VALUES (?, ?, ?, ?, ?, ?)');
+  insertNews.run('Nueva acordada de la CSJN sobre notificaciones electrónicas', 'La Corte Suprema actualizó el reglamento para el uso del sistema de notificaciones electrónicas.', 'CSJN', 'https://www.csjn.gov.ar', '2026-02-25', 'Procesal,Notificaciones,CSJN');
+  insertNews.run('Reforma al Código Procesal Civil y Comercial', 'Se debate en el Congreso un proyecto para agilizar los procesos civiles.', 'Boletín Oficial', 'https://www.boletinoficial.gob.ar', '2026-02-20', 'Procesal,Reforma,Legislación');
 
   // Bibliographies
   const insertBiblio = db.prepare('INSERT INTO bibliographies (subject_id, title, author, type, link) VALUES (?, ?, ?, ?, ?)');
@@ -688,10 +757,53 @@ function seedDb() {
   insertAct.run('Nacion', 'Civil', 'Apelar sentencia definitiva', 5, 'hábiles', 'Art. 244 CPCCN');
   insertAct.run('Nacion', 'Laboral', 'Contestar demanda', 10, 'hábiles', 'Art. 68 LO');
 
-  // Legal Movies
-  const insertMovie = db.prepare('INSERT INTO legal_movies (title, year, country, synopsis, legal_themes, link) VALUES (?, ?, ?, ?, ?, ?)');
-  insertMovie.run('12 Angry Men', 1957, 'USA', 'Un jurado debe decidir la culpabilidad o inocencia de un joven acusado de asesinato.', 'Duda razonable, Jurado, Presunción de inocencia', 'https://imdb.com/title/tt0050083');
-  insertMovie.run('Argentina, 1985', 2022, 'Argentina', 'El equipo de fiscales liderado por Julio Strassera y Luis Moreno Ocampo en el Juicio a las Juntas.', 'Derechos Humanos, Justicia Transicional, Juicio a las Juntas', 'https://imdb.com/title/tt15118192');
+  // Legal Movies (with poster_url)
+  const insertMovie = db.prepare('INSERT INTO legal_movies (title, year, country, synopsis, legal_themes, link, poster_url) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  insertMovie.run('12 Angry Men', 1957, 'USA', 'Un jurado debe decidir la culpabilidad o inocencia de un joven acusado de asesinato.', 'Duda razonable, Jurado, Presunción de inocencia', 'https://imdb.com/title/tt0050083', 'https://m.media-amazon.com/images/M/MV5BYjE4NTllZGUtMmMyOS00NTJhLWE0MjctOWRhMDE2NTc4NjExXkEyXkFqcGc@._V1_.jpg');
+  insertMovie.run('Argentina, 1985', 2022, 'Argentina', 'El equipo de fiscales liderado por Julio Strassera y Luis Moreno Ocampo en el Juicio a las Juntas.', 'Derechos Humanos, Justicia Transicional, Juicio a las Juntas', 'https://imdb.com/title/tt15118192', 'https://m.media-amazon.com/images/M/MV5BNDQ0MmRjNjktNzU1OS00MzZhLWIzYmEtZGFlMWIyMmYzMGFkXkEyXkFqcGc@._V1_.jpg');
+
+  // Seed holidays (Argentine official holidays 2026)
+  const holidayCount = db.prepare('SELECT COUNT(*) as count FROM holiday_calendar').get() as { count: number };
+  if (holidayCount.count === 0) {
+    const insertHoliday = db.prepare('INSERT INTO holiday_calendar (date, description) VALUES (?, ?)');
+    const holidays2026 = [
+      ['2026-01-01', 'Año Nuevo'],
+      ['2026-02-16', 'Carnaval'],
+      ['2026-02-17', 'Carnaval'],
+      ['2026-03-24', 'Día Nacional de la Memoria por la Verdad y la Justicia'],
+      ['2026-04-02', 'Día del Veterano y de los Caídos en la Guerra de Malvinas'],
+      ['2026-04-03', 'Viernes Santo'],
+      ['2026-05-01', 'Día del Trabajador'],
+      ['2026-05-25', 'Día de la Revolución de Mayo'],
+      ['2026-06-15', 'Paso a la Inmortalidad del Gral. Martín Miguel de Güemes'],
+      ['2026-06-20', 'Paso a la Inmortalidad del Gral. Manuel Belgrano'],
+      ['2026-07-09', 'Día de la Independencia'],
+      ['2026-08-17', 'Paso a la Inmortalidad del Gral. José de San Martín'],
+      ['2026-10-12', 'Día del Respeto a la Diversidad Cultural'],
+      ['2026-11-20', 'Día de la Soberanía Nacional'],
+      ['2026-12-08', 'Inmaculada Concepción de María'],
+      ['2026-12-25', 'Navidad'],
+    ];
+    holidays2026.forEach(([date, description]) => insertHoliday.run(date, description));
+    console.log('Seeded holiday calendar.');
+  }
+
+  // Seed forum topics
+  const forumCount = db.prepare('SELECT COUNT(*) as count FROM forum_topics').get() as { count: number };
+  if (forumCount.count === 0) {
+    const now = new Date().toISOString();
+    const insertTopic = db.prepare('INSERT INTO forum_topics (title, content, author_id, subject_id, category, created_at, updated_at, views) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const insertReply = db.prepare('INSERT INTO forum_replies (topic_id, author_id, content, created_at) VALUES (?, ?, ?, ?)');
+    const t1 = insertTopic.run('Duda sobre el fallo Siri y su aplicación actual', 'Estoy estudiando el fallo Siri y me surge una duda: ¿sigue siendo relevante hoy con el art. 43 CN? ¿La acción de amparo legislada supera la creación pretoriana?', u1.lastInsertRowid, s1.lastInsertRowid, 'Derecho Constitucional', now, now, 24);
+    insertReply.run(t1.lastInsertRowid, u2.lastInsertRowid, 'El fallo Siri sigue siendo fundamental como precedente histórico. El art. 43 CN recepta la creación pretoriana pero no la agota. La CSJN sigue citándolo en amparos contra actos estatales.', now);
+    insertReply.run(t1.lastInsertRowid, u1.lastInsertRowid, 'Gracias María, ¿y qué pasa con Kot? ¿Se complementan?', now);
+
+    const t2 = insertTopic.run('¿Alguien tiene apuntes de Obligaciones cátedra Pizarro?', 'Busco resúmenes o apuntes de Obligaciones, cátedra Pizarro (UBA). Si alguien tiene, agradezco.', u1.lastInsertRowid, s2.lastInsertRowid, 'Derecho Civil', now, now, 15);
+    insertReply.run(t2.lastInsertRowid, u2.lastInsertRowid, 'Fijate en la sección de apuntes, hay un resumen completo subido. También podés buscar en la materia Obligaciones.', now);
+
+    insertTopic.run('Debate: Reforma al Código Procesal Civil', 'Se está debatiendo en el Congreso una reforma importante. ¿Qué opinan sobre la oralidad efectiva en procesos civiles? ¿Es viable en Argentina?', u2.lastInsertRowid, s6.lastInsertRowid, 'Actualidad', now, now, 45);
+    console.log('Seeded forum topics.');
+  }
 
   console.log('Database seeded with demo data including new tables.');
 }

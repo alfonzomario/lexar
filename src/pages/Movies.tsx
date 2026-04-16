@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Film, PlayCircle, Search, Filter } from 'lucide-react';
+import { Film, PlayCircle, Search, Filter, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export function Movies() {
   const [movies, setMovies] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch('/api/movies')
       .then((res) => res.json())
-      .then((data) => setMovies(data));
+      .then((data) => {
+        setMovies(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, []);
 
   const filteredMovies = movies.filter(
@@ -51,36 +56,60 @@ export function Movies() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredMovies.map((movie) => (
-          <a
-            key={movie.id}
-            href={movie.link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-indigo-300 transition-all hover:shadow-md flex flex-col h-full group"
-          >
-            <div className="bg-stone-100 w-full h-48 rounded-xl mb-4 flex items-center justify-center relative overflow-hidden">
-              <Film className="w-12 h-12 text-stone-300" />
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <PlayCircle className="w-16 h-16 text-white" />
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredMovies.map((movie) => (
+            <a
+              key={movie.id}
+              href={movie.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-white rounded-2xl shadow-sm border border-stone-200 hover:border-indigo-300 transition-all hover:shadow-md flex flex-col h-full group overflow-hidden"
+            >
+              {/* Poster or Fallback */}
+              <div className="w-full h-64 relative overflow-hidden bg-stone-100">
+                {movie.poster_url ? (
+                  <img
+                    src={movie.poster_url}
+                    alt={movie.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    loading="lazy"
+                    onError={(e) => {
+                      // Fallback to placeholder on error
+                      (e.target as HTMLImageElement).style.display = 'none';
+                      (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                    }}
+                  />
+                ) : null}
+                <div className={`${movie.poster_url ? 'hidden' : ''} w-full h-full flex items-center justify-center`}>
+                  <Film className="w-16 h-16 text-stone-300" />
+                </div>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/0 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                  <PlayCircle className="w-16 h-16 text-white drop-shadow-lg" />
+                </div>
               </div>
-            </div>
-            <h3 className="text-xl font-bold text-stone-900 mb-1">{movie.title}</h3>
-            <p className="text-sm text-stone-500 mb-3">{movie.year} • {movie.country}</p>
-            <p className="text-stone-600 text-sm line-clamp-3 mb-4 flex-1">
-              {movie.synopsis}
-            </p>
-            <div className="flex flex-wrap gap-2 mt-auto">
-              {movie.legal_themes?.split(',').map((theme: string, idx: number) => (
-                <span key={idx} className="bg-indigo-50 text-indigo-700 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                  {theme.trim()}
-                </span>
-              ))}
-            </div>
-          </a>
-        ))}
-      </div>
+              <div className="p-6 flex flex-col flex-1">
+                <h3 className="text-xl font-bold text-stone-900 mb-1 group-hover:text-indigo-600 transition-colors">{movie.title}</h3>
+                <p className="text-sm text-stone-500 mb-3">{movie.year} • {movie.country}</p>
+                <p className="text-stone-600 text-sm line-clamp-3 mb-4 flex-1">
+                  {movie.synopsis}
+                </p>
+                <div className="flex flex-wrap gap-2 mt-auto">
+                  {movie.legal_themes?.split(',').map((theme: string, idx: number) => (
+                    <span key={idx} className="bg-indigo-50 text-indigo-700 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                      {theme.trim()}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
     </motion.div>
   );
 }

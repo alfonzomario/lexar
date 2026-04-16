@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router';
-import { Scale, ArrowLeft, FileText, Bookmark, Share2, AlertCircle, Sparkles, Trash2, Calendar, Users, Landmark, Book } from 'lucide-react';
+import { Scale, ArrowLeft, FileText, Bookmark, Share2, AlertCircle, Sparkles, Trash2, Calendar, Users, Landmark, Book, BookText } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
 import Markdown from 'react-markdown';
@@ -336,6 +336,19 @@ export function BriefDetail() {
                   </section>
                 )}
 
+                {/* Hechos del Caso */}
+                {brief.facts && (
+                  <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
+                    <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                      <BookText className="w-5 h-5 text-indigo-600" />
+                      Hechos del Caso
+                    </h2>
+                    <div className="text-base md:text-lg text-stone-800 leading-[1.9] whitespace-pre-line" style={{ fontFamily: "'Lora', Georgia, serif" }}>
+                      <HighlightableText text={formatParagraphs(brief.facts)} annotations={annotations} onAddAnnotation={handleAddAnnotation} />
+                    </div>
+                  </section>
+                )}
+
                 <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
                   <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                     <AlertCircle className="w-5 h-5 text-indigo-600" />
@@ -391,7 +404,7 @@ export function BriefDetail() {
             {activeTab === 'full' && (
               <div className="bg-[#FDFBF7] p-8 md:p-14 lg:p-20 rounded-3xl shadow-[inset_0_2px_20px_rgba(0,0,0,0.04)] border border-stone-200/60 max-w-4xl mx-auto">
                 <h2 className="text-2xl md:text-3xl font-bold mb-10 text-stone-800 border-b border-stone-200 pb-6 text-center tracking-tight" style={{ fontFamily: "'Lora', Georgia, serif" }}>Sentencia Completa</h2>
-                <LegalTextRenderer text={brief.facts || ''} />
+                <LegalTextRenderer text={brief.full_text || brief.facts || ''} />
               </div>
             )}
 
