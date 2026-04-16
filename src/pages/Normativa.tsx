@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router';
-import { Search, Scale, FileText, ArrowRight, Filter, Calendar, Building2 } from 'lucide-react';
+import { Search, Scale, FileText, ArrowRight, Filter, Calendar, Building2, Upload } from 'lucide-react';
 import { motion } from 'motion/react';
 import { clsx } from 'clsx';
+import { UploadNormaModal } from '../components/UploadNormaModal';
 
 export function Normativa() {
   const [normas, setNormas] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
 
   useEffect(() => {
     fetchNormas();
@@ -48,20 +50,30 @@ export function Normativa() {
             Buscá leyes, decretos y resoluciones oficiales con análisis de IA y mapas de relaciones.
           </p>
           
-          <form onSubmit={handleSearch} className="relative pt-4">
-            <Search className="absolute left-4 top-[calc(1rem+1.25rem)] -translate-y-1/2 w-5 h-5 text-stone-500" />
-            <input
-              type="text"
-              placeholder="Ej: Ley 27541, Alquileres, Defensa del Consumidor..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-12 pr-4 py-4 bg-white/10 border border-white/20 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder-stone-500 text-white"
-            />
-            <button 
-              type="submit"
-              className="absolute right-2 top-[calc(1rem+0.5rem)] bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-indigo-700 transition-all"
+          <form onSubmit={handleSearch} className="relative pt-4 flex gap-4 items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-500" />
+              <input
+                type="text"
+                placeholder="Ej: Ley 27541, Alquileres, Defensa del Consumidor..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-12 pr-4 py-4 bg-white/10 border border-white/20 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder-stone-500 text-white"
+              />
+              <button 
+                type="submit"
+                className="absolute right-2 top-1/2 -translate-y-1/2 bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold hover:bg-indigo-700 transition-all"
+              >
+                Buscar
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsUploadOpen(true)}
+              className="bg-white text-stone-900 px-6 py-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-stone-50 hover:shadow-lg transition-all shrink-0"
             >
-              Buscar
+              <Upload className="w-4 h-4 text-indigo-600" />
+              Aportar a la BD
             </button>
           </form>
         </div>
@@ -130,6 +142,12 @@ export function Normativa() {
           )}
         </div>
       </div>
+
+      <UploadNormaModal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        onSuccess={() => fetchNormas(search)}
+      />
     </motion.div>
   );
 }

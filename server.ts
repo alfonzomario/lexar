@@ -1412,6 +1412,26 @@ ${textToAnalyze}
     }
   });
 
+  app.post('/api/normas', (req, res) => {
+    const { tipo, numero, anio, titulo, texto, organismo, fecha_publicacion, fuente_url } = req.body;
+    
+    if (!titulo || !texto) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+
+    try {
+      const result = db.prepare(`
+        INSERT INTO normas (tipo, numero, anio, titulo, texto, organismo, fecha_publicacion, fuente_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(tipo || 'Ley', numero || null, anio || null, titulo, texto, organismo || null, fecha_publicacion || null, fuente_url || null);
+      
+      res.status(201).json({ success: true, id: result.lastInsertRowid });
+    } catch (e) {
+      console.error('Error saving norma:', e);
+      res.status(500).json({ error: 'Error interno al guardar normativa' });
+    }
+  });
+
   // Text Annotations
   app.get('/api/briefs/:briefId/annotations', (req, res) => {
     // Ideally we would filter by user_id from session, here we assume it's passed or just mock for demo
@@ -1517,6 +1537,51 @@ ${textToAnalyze}
       ORDER BY users.name ASC
     `).all();
     res.json(users);
+  });
+
+  app.get('/api/admin/users/all', (req, res) => {
+    const adminId = getUserId(req);
+    if (!adminId) return res.status(401).json({ error: 'No autenticado' });
+    const admin = db.prepare('SELECT tier FROM users WHERE id = ?').get(adminId) as any;
+    if (!admin || admin.tier !== 'super_admin') {
+      return res.status(403).json({ error: 'Prohibido' });
+    }
+    const allUsers = db.prepare('SELECT id, name, email, tier, profile_role FROM users ORDER BY created_at DESC').all();
+    res.json(allUsers);
+  });
+
+  app.post('/api/admin/users', async (req, res) => {
+    const adminId = getUserId(req);
+    if (!adminId) return res.status(401).json({ error: 'No autenticado' });
+
+    const admin = db.prepare('SELECT tier FROM users WHERE id = ?').get(adminId) as any;
+    if (!admin || admin.tier !== 'super_admin') {
+      return res.status(403).json({ error: 'Solo los super_admin pueden crear usuarios manualmente' });
+    }
+
+    const { name, email, password, tier, profile_role } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+
+    try {
+      const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+      if (existing) {
+        return res.status(409).json({ error: 'El email ya está registrado' });
+      }
+
+      const bcrypt = require('bcrypt');
+      const hash = await bcrypt.hash(password, 10);
+      
+      const result = db.prepare('INSERT INTO users (name, email, password, tier, profile_role) VALUES (?, ?, ?, ?, ?)').run(
+        name, email, hash, tier || 'free', profile_role || 'Estudiante'
+      );
+
+      res.status(201).json({ success: true, id: result.lastInsertRowid });
+    } catch (e: any) {
+      console.error('Error creating user:', e);
+      res.status(500).json({ error: 'Error al crear usuario' });
+    }
   });
 
   // Chat rooms (Pro)

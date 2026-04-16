@@ -10,6 +10,52 @@ export function Admin() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [pendingExams, setPendingExams] = useState<any[]>([]);
   const [pendingNotes, setPendingNotes] = useState<any[]>([]);
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', tier: 'free', profile_role: 'Estudiante' });
+
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch('/api/admin/users/all', { headers: user ? { 'X-User-Id': String(user.id) } : {} });
+      if (res.ok) {
+        const data = await res.json();
+        setAdminUsers(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    if (isSuperAdmin && activeTab === 'users') {
+      fetchUsers();
+    }
+  }, [isSuperAdmin, activeTab, user]);
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id)
+        },
+        body: JSON.stringify(newUser)
+      });
+      if (res.ok) {
+        setShowCreateUser(false);
+        setNewUser({ name: '', email: '', password: '', tier: 'free', profile_role: 'Estudiante' });
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Error al crear usuario');
+      }
+    } catch (error) {
+      alert('Error de conexión');
+    }
+  };
 
   const tabs = [
     { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
@@ -307,7 +353,93 @@ export function Admin() {
             </div>
           )}
 
-          {(activeTab === 'users' || activeTab === 'moderation' || activeTab === 'settings') && (
+          {activeTab === 'users' && (
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-stone-900">Gestión de Usuarios</h2>
+                <button 
+                  onClick={() => setShowCreateUser(!showCreateUser)}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                >
+                  <Users className="w-4 h-4" /> {showCreateUser ? 'Ver Tabla' : 'Crear Usuario'}
+                </button>
+              </div>
+
+              {showCreateUser ? (
+                <div className="bg-stone-50 p-6 rounded-2xl border border-stone-200">
+                  <h3 className="font-bold text-stone-900 mb-4">Nuevo Usuario Manual</h3>
+                  <form onSubmit={handleCreateUser} className="space-y-4 max-w-xl">
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Nombre Completo</label>
+                      <input required type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full border border-stone-200 rounded-xl px-4 py-2" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Email</label>
+                      <input required type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full border border-stone-200 rounded-xl px-4 py-2" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Contraseña Inicial</label>
+                      <input required type="text" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} className="w-full border border-stone-200 rounded-xl px-4 py-2" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Plan / Permisos</label>
+                      <select value={newUser.tier} onChange={e => setNewUser({...newUser, tier: e.target.value})} className="w-full border border-stone-200 rounded-xl px-4 py-2 bg-white">
+                        <option value="free">Free (Básico)</option>
+                        <option value="basic">Basic (Intermedio)</option>
+                        <option value="pro">Pro (Avanzado)</option>
+                        <option value="admin">Admin</option>
+                        <option value="super_admin">Super Admin</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Rol de Perfil</label>
+                      <select value={newUser.profile_role} onChange={e => setNewUser({...newUser, profile_role: e.target.value})} className="w-full border border-stone-200 rounded-xl px-4 py-2 bg-white">
+                        <option value="Estudiante">Estudiante</option>
+                        <option value="Abogado">Abogado</option>
+                        <option value="Profesor">Profesor</option>
+                        <option value="Administrador">Administrador</option>
+                      </select>
+                    </div>
+                    <button type="submit" className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl hover:bg-emerald-700">Crear Usuario</button>
+                  </form>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-stone-200 text-stone-500 text-sm uppercase tracking-wider">
+                        <th className="py-4 px-4 font-semibold">Nombre</th>
+                        <th className="py-4 px-4 font-semibold">Email</th>
+                        <th className="py-4 px-4 font-semibold">Plan</th>
+                        <th className="py-4 px-4 font-semibold">Rol</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-sm">
+                      {adminUsers.map(u => (
+                        <tr key={u.id} className="border-b border-stone-100 hover:bg-stone-50">
+                          <td className="py-4 px-4 font-medium text-stone-900">{u.name}</td>
+                          <td className="py-4 px-4 text-stone-500">{u.email}</td>
+                          <td className="py-4 px-4">
+                            <span className={clsx("px-2 py-1 rounded-md text-xs font-semibold", 
+                              u.tier === 'super_admin' ? 'bg-purple-100 text-purple-700' :
+                              u.tier === 'pro' ? 'bg-amber-100 text-amber-700' :
+                              u.tier === 'basic' ? 'bg-emerald-100 text-emerald-700' :
+                              'bg-stone-100 text-stone-600'
+                            )}>
+                              {u.tier}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4 text-stone-500">{u.profile_role || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {(activeTab === 'moderation' || activeTab === 'settings') && (
             <div className="text-center py-24 text-stone-500 bg-stone-50 rounded-2xl border border-stone-200 border-dashed h-full flex flex-col items-center justify-center">
               <Settings className="w-12 h-12 mb-4 opacity-50" />
               <p>Módulo en desarrollo para la versión MVP.</p>
