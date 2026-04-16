@@ -489,8 +489,8 @@ export function Layout() {
           <div className="md:text-right">
             <p className="text-sm font-semibold text-stone-900 mb-2">Legal</p>
             <div className="flex flex-col gap-2 text-sm text-stone-500">
-              <Link to="#" className="hover:text-indigo-600 transition-colors">Términos y Condiciones</Link>
-              <Link to="#" className="hover:text-indigo-600 transition-colors">Política de Privacidad</Link>
+              <Link to="/terms" className="hover:text-indigo-600 transition-colors">Términos y Condiciones</Link>
+              <Link to="/privacy" className="hover:text-indigo-600 transition-colors">Política de Privacidad</Link>
             </div>
           </div>
         </div>
