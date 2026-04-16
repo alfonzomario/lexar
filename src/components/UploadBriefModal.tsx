@@ -28,6 +28,7 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
     const [parties, setParties] = useState('');
     const [timeline, setTimeline] = useState<any[]>([]);
     const [citations, setCitations] = useState<any[]>([]);
+    const [fullText, setFullText] = useState('');
 
     const [subjects, setSubjects] = useState<any[]>([]);
     const [isSaving, setIsSaving] = useState(false);
@@ -40,7 +41,7 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             setTitle(''); setFacts(''); setIssue(''); setRule('');
             setReasoning(''); setHolding(''); setRelevance(''); setKeywords('');
             setSubjectId(''); setCourt(''); setYear(''); setParties('');
-            setTimeline([]); setCitations([]);
+            setTimeline([]); setCitations([]); setFullText('');
         }
     }, [isOpen]);
 
@@ -58,8 +59,9 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
 
             // AI now extracts the title too
             setTitle(data.title || 'Nuevo Fallo Analizado');
-            // The full original text is ALWAYS stored verbatim - never replaced by AI summary
-            setFacts(rawText);
+            // Store full verbatim text separately; AI-extracted facts go to facts field
+            setFullText(rawText);
+            setFacts(data.facts || '');
             setIssue(data.issue || '');
             setRule(data.rule || '');
             setReasoning(data.reasoning || '');
@@ -75,6 +77,7 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             setStep('review');
         } catch (error) {
             console.error('Error parsing text', error);
+            alert('Error al conectar con el servicio de IA. Verificá tu conexión e intentá de nuevo.');
             setStep('input');
         }
     };
@@ -113,15 +116,17 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
                 body: JSON.stringify({ text }),
             });
             if (!aiRes.ok) {
-                alert('Error al analizar el fallo con IA.');
+                const errData = await aiRes.json().catch(() => ({ error: 'Error desconocido' }));
+                alert(errData.error || 'Error al analizar el fallo con IA.');
                 setStep('input');
                 return;
             }
             const data = await aiRes.json();
 
-            // AI now extracts the title. Full verbatim text always stored as facts.
+            // AI now extracts the title. Full verbatim text stored separately.
             setTitle(data.title || file.name.replace('.pdf', ''));
-            setFacts(text);
+            setFullText(text);
+            setFacts(data.facts || '');
             setIssue(data.issue || '');
             setRule(data.rule || '');
             setReasoning(data.reasoning || '');
@@ -152,7 +157,7 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id: subjectId,
-                    court, year, parties, timeline, citations
+                    court, year, parties, timeline, citations, full_text: fullText || facts
                 })
             });
             if (res.ok) {
