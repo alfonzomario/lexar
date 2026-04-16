@@ -16,6 +16,7 @@ const require2 = createRequire(import.meta.url);
 const { PDFParse } = require2('pdf-parse');
 import jwt from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
+import bcrypt from 'bcrypt';
 import { authRoutes } from './src/backend/routes/auth.routes.js';
 
 async function startServer() {
@@ -1546,7 +1547,7 @@ ${textToAnalyze}
     if (!admin || admin.tier !== 'super_admin') {
       return res.status(403).json({ error: 'Prohibido' });
     }
-    const allUsers = db.prepare('SELECT id, name, email, tier, profile_role FROM users ORDER BY created_at DESC').all();
+    const allUsers = db.prepare('SELECT id, name, email, tier, profile_role FROM users ORDER BY id DESC').all();
     res.json(allUsers);
   });
 
@@ -1570,7 +1571,6 @@ ${textToAnalyze}
         return res.status(409).json({ error: 'El email ya está registrado' });
       }
 
-      const bcrypt = require('bcrypt');
       const hash = await bcrypt.hash(password, 10);
       
       const result = db.prepare('INSERT INTO users (name, email, password, tier, profile_role) VALUES (?, ?, ?, ?, ?)').run(
