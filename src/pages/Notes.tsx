@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2, School, Calendar, Filter, ChevronDown } from 'lucide-react';
+import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2, School, Calendar, Filter, ChevronDown, GraduationCap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { useAuth } from '../contexts/AuthContext';
@@ -72,6 +72,8 @@ export function Notes() {
     subject_id: '',
     university_id: '',
     year: '',
+    chair_id: '',
+    profesor: '',
   });
 
   const isPremium = user && ['pro', 'admin', 'super_admin'].includes(user.tier);
@@ -93,6 +95,15 @@ export function Notes() {
     queryKey: ['subjects'],
     queryFn: async () => {
       const res = await fetch('/api/subjects');
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    }
+  });
+
+  const { data: chairs = [] } = useQuery({
+    queryKey: ['chairs'],
+    queryFn: async () => {
+      const res = await fetch('/api/chairs');
       if (!res.ok) throw new Error('Failed to fetch');
       return res.json();
     }
@@ -125,7 +136,7 @@ export function Notes() {
       return response.json();
     },
     onSuccess: () => {
-      setNewNote({ title: '', file_url: '', description: '', subject_id: '', university_id: '', year: '' });
+      setNewNote({ title: '', file_url: '', description: '', subject_id: '', university_id: '', year: '', chair_id: '', profesor: '' });
       setIsModalOpen(false);
       queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
@@ -151,6 +162,8 @@ export function Notes() {
       subject_id: newNote.subject_id,
       university_id: newNote.university_id || null,
       year: newNote.year ? parseInt(newNote.year, 10) : null,
+      chair_id: newNote.chair_id || null,
+      profesor: newNote.profesor || null,
     });
   };
 
@@ -382,6 +395,15 @@ export function Notes() {
                 </div>
               )}
 
+              {/* Cátedra / Profesor badge */}
+              {(note.chair_name || note.professor) && (
+                <div className="flex items-center gap-1.5 text-xs text-stone-500 mb-3">
+                  <GraduationCap className="w-3 h-3 text-stone-400" />
+                  {note.chair_name && <span>Cátedra {note.chair_name}</span>}
+                  {note.professor && <span className="text-stone-400">· Prof. {note.professor}</span>}
+                </div>
+              )}
+
               {/* Description or content preview */}
               <p className="text-stone-500 text-sm flex-1 line-clamp-3 mb-6 leading-relaxed" style={{ fontFamily: "'Lora', Georgia, serif" }}>
                 {note.content || 'Apunte compartido vía Google Drive.'}
@@ -544,6 +566,40 @@ export function Notes() {
                       <option key={y} value={y}>{y}</option>
                     ))}
                   </select>
+                </div>
+                {/* Cátedra */}
+                <div className="space-y-1.5">
+                  <label htmlFor="note-chair" className="block text-sm font-bold text-stone-700">
+                    Cátedra <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <select
+                    id="note-chair"
+                    value={newNote.chair_id}
+                    onChange={(e) => setNewNote({ ...newNote, chair_id: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all appearance-none"
+                  >
+                    <option value="">Sin especificar</option>
+                    {chairs.map((c: any) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}{c.professor ? ` (${c.professor})` : ''}{c.subject_name ? ` — ${c.subject_name}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Profesor */}
+                <div className="space-y-1.5">
+                  <label htmlFor="note-profesor" className="block text-sm font-bold text-stone-700">
+                    Profesor <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <input
+                    id="note-profesor"
+                    type="text"
+                    value={newNote.profesor}
+                    onChange={(e) => setNewNote({ ...newNote, profesor: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                    placeholder="Ej. Dr. Pérez"
+                  />
                 </div>
 
                 {/* Google Drive Link */}

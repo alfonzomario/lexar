@@ -404,7 +404,9 @@ export function BriefDetail() {
             {activeTab === 'full' && (
               <div className="bg-[#FDFBF7] p-8 md:p-14 lg:p-20 rounded-3xl shadow-[inset_0_2px_20px_rgba(0,0,0,0.04)] border border-stone-200/60 max-w-4xl mx-auto">
                 <h2 className="text-2xl md:text-3xl font-bold mb-10 text-stone-800 border-b border-stone-200 pb-6 text-center tracking-tight" style={{ fontFamily: "'Lora', Georgia, serif" }}>Sentencia Completa</h2>
-                <LegalTextRenderer text={brief.full_text || brief.facts || ''} />
+                <div className="text-base md:text-lg text-stone-800 leading-[1.9] whitespace-pre-line" style={{ fontFamily: "'Lora', Georgia, serif" }}>
+                  <HighlightableText text={formatParagraphs(brief.full_text || brief.facts || '')} annotations={annotations} onAddAnnotation={handleAddAnnotation} />
+                </div>
               </div>
             )}
 

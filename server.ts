@@ -1196,16 +1196,37 @@ ${textToAnalyze}
     res.json({ title: row.title, content: row.content || '' });
   });
 
+  // Chairs (cátedras)
+  app.get('/api/chairs', (req, res) => {
+    const { university_id } = req.query;
+    let query = `
+      SELECT chairs.*, universities.name as university_name, subjects.name as subject_name
+      FROM chairs
+      LEFT JOIN universities ON chairs.university_id = universities.id
+      LEFT JOIN subjects ON chairs.subject_id = subjects.id
+    `;
+    const params: any[] = [];
+    if (university_id && !isNaN(Number(university_id))) {
+      query += ' WHERE chairs.university_id = ?';
+      params.push(Number(university_id));
+    }
+    query += ' ORDER BY chairs.name ASC';
+    const chairs = db.prepare(query).all(...params);
+    res.json(chairs);
+  });
+
   // Student Notes
   app.get('/api/notes', (req, res) => {
     const { subject_id, university_id, year: yearParam } = req.query;
     let query = `
       SELECT student_notes.*, users.name as author_name, subjects.name as subject_name,
-        universities.name as university_name
+        universities.name as university_name,
+        chairs.name as chair_name, chairs.professor as professor
       FROM student_notes 
       JOIN users ON student_notes.author_id = users.id
       JOIN subjects ON student_notes.subject_id = subjects.id
       LEFT JOIN universities ON student_notes.university_id = universities.id
+      LEFT JOIN chairs ON student_notes.chair_id = chairs.id
       WHERE student_notes.status = 'published'
     `;
     const params: any[] = [];
@@ -1489,7 +1510,12 @@ ${textToAnalyze}
 
   // Users
   app.get('/api/users', (req, res) => {
-    const users = db.prepare('SELECT * FROM users').all();
+    const users = db.prepare(`
+      SELECT users.id, users.name, users.email, users.tier, users.university
+      FROM users
+      WHERE users.tier IN ('pro', 'admin', 'super_admin')
+      ORDER BY users.name ASC
+    `).all();
     res.json(users);
   });
 
