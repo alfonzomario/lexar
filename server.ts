@@ -37,10 +37,10 @@ async function startServer() {
   const getUserId = (req: express.Request): number | null => {
     const token = req.cookies?.token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
     if (token) {
-        try {
-            const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_development_lexargar') as any;
-            return decoded.userId;
-        } catch(e) {}
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_development_lexargar') as any;
+        return decoded.userId;
+      } catch (e) { }
     }
     const id = req.headers['x-user-id'];
     if (id === undefined || id === null) return null;
@@ -289,7 +289,7 @@ async function startServer() {
     const uid = userId ?? 0;
     const voteCountSub = "(SELECT COUNT(*) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
     const userVotedSub = uid ? `(SELECT 1 FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ${uid})` : '0';
-    
+
     let query = `
       SELECT student_notes.*, users.name as author_name, subjects.name as subject_name,
         un.name as university_name, ${voteCountSub} as vote_count, ${userVotedSub} as user_voted
