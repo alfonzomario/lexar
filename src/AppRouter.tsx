@@ -26,11 +26,13 @@ import { Profile } from './pages/Profile';
 import { Terms } from './pages/Terms';
 import { Privacy } from './pages/Privacy';
 import { AuthProvider } from './contexts/AuthContext';
+import { ScrollToTop } from './components/ScrollToTop';
 
 export function AppRouter() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <ScrollToTop />
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<Home />} />
