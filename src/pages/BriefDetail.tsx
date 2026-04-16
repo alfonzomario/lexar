@@ -483,14 +483,17 @@ export function BriefDetail() {
               )}
             </div>
           )}
-          <div className="bg-stone-900 rounded-3xl p-6 text-white shadow-xl h-[500px] md:h-[600px] flex flex-col">
-            <div className="flex items-center gap-3 mb-6 shrink-0">
-              <div className="bg-indigo-500 p-2 rounded-xl">
-                <Sparkles className="w-5 h-5 text-white" />
+          <div className="bg-indigo-900 bg-gradient-to-br from-indigo-900 to-indigo-800 rounded-3xl p-6 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-indigo-700/50 h-[500px] md:h-[600px] flex flex-col">
+            <div className="flex items-center gap-3 mb-6 shrink-0 border-b border-indigo-700/50 pb-4">
+              <div className="bg-white/10 p-2 inset-0 backdrop-blur-md rounded-xl border border-white/10 shadow-sm">
+                <Sparkles className="w-5 h-5 text-indigo-200" />
               </div>
               <div>
-                <h3 className="font-bold">Asistente LexARG</h3>
-                <p className="text-[10px] text-stone-400 uppercase tracking-wider">IA Especializada en Casos</p>
+                <h3 className="font-bold text-lg tracking-tight">Asistente LexARG</h3>
+                <p className="text-[10px] text-indigo-300 uppercase tracking-widest font-semibold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  IA Especializada
+                </p>
               </div>
             </div>
 

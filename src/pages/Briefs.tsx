@@ -65,38 +65,40 @@ export function Briefs() {
           </p>
         </div>
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-0 w-full sm:w-auto bg-white border border-stone-200 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 overflow-hidden transition-all">
             <div className="relative flex-1 sm:flex-none">
-              <Search className="w-5 h-5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-5 h-5 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                placeholder="Buscar por título, tema o materia..."
+                placeholder="Buscar contenido..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-stone-200 rounded-xl w-full md:w-80 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="pl-11 pr-4 py-3 bg-transparent border-none w-full md:w-72 focus:outline-none focus:ring-0 text-sm"
               />
             </div>
+            <div className="w-px h-6 bg-stone-200 hidden sm:block"></div>
             <button
               onClick={() => setFiltersOpen(!filtersOpen)}
               className={clsx(
-                "p-2 border rounded-xl transition-colors shrink-0 relative",
+                "px-4 py-3 transition-colors flex items-center gap-2 text-sm font-medium",
                 filtersOpen || hasActiveFilters
-                  ? "border-indigo-300 bg-indigo-50 text-indigo-600"
-                  : "border-stone-200 hover:bg-stone-50 text-stone-600"
+                  ? "bg-indigo-50 text-indigo-600"
+                  : "hover:bg-stone-50 text-stone-600"
               )}
             >
-              <Filter className="w-5 h-5" />
+              <Filter className="w-4 h-4" />
+              <span className="hidden sm:inline">Filtros</span>
               {hasActiveFilters && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 bg-indigo-600 rounded-full" />
+                <span className="w-2 h-2 bg-indigo-600 rounded-full" />
               )}
             </button>
           </div>
           <button
             onClick={() => setIsUploadOpen(true)}
-            className="w-full sm:w-auto bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-colors shrink-0 shadow-sm"
+            className="w-full sm:w-auto bg-indigo-600 text-white px-6 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 hover:shadow-md hover:-translate-y-0.5 transition-all shrink-0"
           >
             <Sparkles className="w-4 h-4 text-indigo-200" />
-            Aportar Jurisprudencia
+            Aportar a la DB
           </button>
         </div>
       </div>

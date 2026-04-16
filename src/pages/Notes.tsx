@@ -237,7 +237,7 @@ export function Notes() {
 
       {/* Search and Filters */}
       <div className="space-y-4">
-        <div className="flex items-center gap-3">
+        <div className="flex bg-white items-center gap-0 w-full border border-stone-200 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-emerald-500/20 focus-within:border-emerald-500 overflow-hidden transition-all">
           <div className="relative flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-stone-400" />
             <input
@@ -245,19 +245,24 @@ export function Notes() {
               placeholder="Buscar por materia, título o autor..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-12 pr-4 py-4 bg-white border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all shadow-sm text-lg"
+              className="w-full pl-12 pr-4 py-4 bg-transparent border-none focus:outline-none focus:ring-0 text-base"
             />
           </div>
+          <div className="w-px h-6 bg-stone-200 hidden sm:block"></div>
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={clsx(
-              "p-4 rounded-2xl border transition-all shrink-0",
+              "px-5 py-4 transition-colors flex items-center gap-2 text-sm font-medium shrink-0",
               showFilters || filterUniversityId || filterYear || filterSubjectId
-                ? "bg-emerald-50 border-emerald-200 text-emerald-600"
-                : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50"
+                ? "bg-emerald-50 text-emerald-600"
+                : "hover:bg-stone-50 text-stone-600"
             )}
           >
             <Filter className="w-5 h-5" />
+            <span className="hidden sm:inline">Filtros</span>
+            {(filterUniversityId || filterYear || filterSubjectId) && (
+              <span className="w-2 h-2 bg-emerald-600 rounded-full" />
+            )}
           </button>
         </div>
 

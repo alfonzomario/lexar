@@ -3,6 +3,57 @@ import { Link } from 'react-router';
 import { BookOpen, Scale, BookA, Calculator, ArrowRight, Newspaper, Users, GraduationCap, Film, Briefcase, CreditCard, FileText, MessageCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
+const tools = [
+  {
+    to: '/subjects', icon: BookOpen, title: 'Materias', desc: 'Outlines y recursos por materia.',
+    iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600', hoverBg: 'group-hover:bg-indigo-600', hoverGradient: 'from-indigo-50',
+  },
+  {
+    to: '/briefs', icon: Scale, title: 'Fallos', desc: 'Catálogo de jurisprudencia con IA.',
+    iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', hoverBg: 'group-hover:bg-emerald-600', hoverGradient: 'from-emerald-50',
+  },
+  {
+    to: '/notes', icon: FileText, title: 'Apuntes', desc: 'Resúmenes y apuntes de alumnos.',
+    iconBg: 'bg-sky-100', iconColor: 'text-sky-600', hoverBg: 'group-hover:bg-sky-600', hoverGradient: 'from-sky-50',
+  },
+  {
+    to: '/universities', icon: GraduationCap, title: 'Universidades', desc: 'Planes de estudio y cátedras.',
+    iconBg: 'bg-amber-100', iconColor: 'text-amber-600', hoverBg: 'group-hover:bg-amber-600', hoverGradient: 'from-amber-50',
+  },
+  {
+    to: '/normativa', icon: Scale, title: 'Normativa', desc: 'Leyes, decretos y códigos.',
+    iconBg: 'bg-violet-100', iconColor: 'text-violet-600', hoverBg: 'group-hover:bg-violet-600', hoverGradient: 'from-violet-50',
+  },
+  {
+    to: '/calculator', icon: Calculator, title: 'Calculadora Plazos', desc: 'Calculadora de plazos procesales.',
+    iconBg: 'bg-orange-100', iconColor: 'text-orange-600', hoverBg: 'group-hover:bg-orange-600', hoverGradient: 'from-orange-50',
+  },
+  {
+    to: '/latinisms', icon: BookA, title: 'Latinismos', desc: 'Diccionario de términos latinos.',
+    iconBg: 'bg-teal-100', iconColor: 'text-teal-600', hoverBg: 'group-hover:bg-teal-600', hoverGradient: 'from-teal-50',
+  },
+  {
+    to: '/forum', icon: Users, title: 'Foro', desc: 'Discusiones y debates académicos.',
+    iconBg: 'bg-rose-100', iconColor: 'text-rose-600', hoverBg: 'group-hover:bg-rose-600', hoverGradient: 'from-rose-50',
+  },
+  {
+    to: '/articles', icon: Newspaper, title: 'Artículos', desc: 'Noticias y publicaciones jurídicas.',
+    iconBg: 'bg-fuchsia-100', iconColor: 'text-fuchsia-600', hoverBg: 'group-hover:bg-fuchsia-600', hoverGradient: 'from-fuchsia-50',
+  },
+  {
+    to: '/jobs', icon: Briefcase, title: 'Bolsa de Empleo', desc: 'Oportunidades laborales.',
+    iconBg: 'bg-cyan-100', iconColor: 'text-cyan-600', hoverBg: 'group-hover:bg-cyan-600', hoverGradient: 'from-cyan-50',
+  },
+  {
+    to: '/movies', icon: Film, title: 'Cine Jurídico', desc: 'Recomendaciones de películas.',
+    iconBg: 'bg-pink-100', iconColor: 'text-pink-600', hoverBg: 'group-hover:bg-pink-600', hoverGradient: 'from-pink-50',
+  },
+  {
+    to: '/chat', icon: MessageCircle, title: 'Chat Estudiantil', desc: 'Salas y mensajes directos.',
+    iconBg: 'bg-lime-100', iconColor: 'text-lime-600', hoverBg: 'group-hover:bg-lime-600', hoverGradient: 'from-lime-50',
+  },
+];
+
 export function Home() {
   const [news, setNews] = useState([]);
 
@@ -16,7 +67,7 @@ export function Home() {
     hidden: { opacity: 0 },
     show: {
       opacity: 1,
-      transition: { staggerChildren: 0.1 }
+      transition: { staggerChildren: 0.06 }
     }
   };
 
@@ -97,43 +148,33 @@ export function Home() {
 
       {/* Quick Access */}
       <section>
-        <div className="flex items-center justify-between mb-8 px-2">
-          <h2 className="text-2xl font-bold text-stone-900">Herramientas Principales</h2>
+        <div className="flex items-center justify-between mb-2 px-2">
+          <h2 className="text-3xl font-bold text-stone-900" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>Herramientas Principales</h2>
         </div>
+        <p className="text-stone-500 text-base mb-8 px-2">Todo lo que necesitás para tu carrera en un solo lugar.</p>
 
         <motion.div
           variants={containerVariants}
           initial="hidden"
           animate="show"
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5"
         >
-          {[
-            { to: '/subjects', icon: BookOpen, title: 'Materias', desc: 'Outlines y recursos por materia.', color: 'indigo' },
-            { to: '/briefs', icon: Scale, title: 'Fallos', desc: 'Catálogo de jurisprudencia.', color: 'emerald' },
-            { to: '/notes', icon: FileText, title: 'Apuntes', desc: 'Resúmenes de alumnos.', color: 'sky' },
-            { to: '/universities', icon: GraduationCap, title: 'Universidades', desc: 'Planes de estudio y cátedras.', color: 'amber' },
-            { to: '/normativa', icon: Scale, title: 'Normativa', desc: 'Leyes y códigos de fondo.', color: 'blue' },
-            { to: '/calculator', icon: Calculator, title: 'Calculadora Plazos', desc: 'Calculadora procesal.', color: 'orange' },
-            { to: '/latinisms', icon: BookA, title: 'Latinismos', desc: 'Diccionario de términos.', color: 'teal' },
-            { to: '/forum', icon: Users, title: 'Foro', desc: 'Discusiones y debates.', color: 'rose' },
-            { to: '/articles', icon: Newspaper, title: 'Artículos', desc: 'Noticias y publicaciones.', color: 'fuchsia' },
-            { to: '/jobs', icon: Briefcase, title: 'Bolsa de Empleo', desc: 'Oportunidades laborales.', color: 'violet' },
-            { to: '/movies', icon: Film, title: 'Cine Jurídico', desc: 'Recomendaciones de películas.', color: 'cyan' },
-            { to: '/chat', icon: MessageCircle, title: 'Chat Estudiantil', desc: 'Grupos y mensajes.', color: 'pink' },
-          ].map((item, index) => (
+          {tools.map((item, index) => (
             <motion.div key={index} variants={itemVariants}>
               <Link
                 to={item.to}
-                className="bg-white p-6 rounded-2xl shadow-sm border border-stone-100 hover:shadow-lg transition-all flex flex-col h-full group relative overflow-hidden"
+                className="bg-white p-6 rounded-2xl shadow-sm border border-stone-100 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col h-full group relative overflow-hidden"
               >
                 {/* Hover gradient background effect */}
-                <div className={`absolute inset-0 bg-gradient-to-br from-${item.color}-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
+                <div className={`absolute inset-0 bg-gradient-to-br ${item.hoverGradient} to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300`}></div>
 
                 <div className="relative z-10">
-                  <div className={`bg-${item.color}-100 w-12 h-12 rounded-xl flex items-center justify-center mb-5 group-hover:scale-110 group-hover:bg-${item.color}-600 transition-all duration-300 shadow-sm`}>
-                    <item.icon className={`w-6 h-6 text-${item.color}-600 group-hover:text-white transition-colors`} />
+                  <div className={`${item.iconBg} w-12 h-12 rounded-xl flex items-center justify-center mb-5 group-hover:scale-110 ${item.hoverBg} transition-all duration-300 shadow-sm`}>
+                    <item.icon className={`w-6 h-6 ${item.iconColor} group-hover:text-white transition-colors`} />
                   </div>
-                  <h3 className="text-xl font-bold mb-2 text-stone-900 group-hover:text-indigo-900 transition-colors">{item.title}</h3>
+                  <h3 className="text-xl font-bold mb-2 text-stone-900 group-hover:text-stone-800 transition-colors" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                    {item.title}
+                  </h3>
                   <p className="text-stone-500 text-sm leading-relaxed">
                     {item.desc}
                   </p>
