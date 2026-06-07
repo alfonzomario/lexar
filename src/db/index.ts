@@ -336,6 +336,28 @@ function initDb() {
       FOREIGN KEY (job_id) REFERENCES jobs(id),
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS normas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tipo TEXT,
+      numero TEXT,
+      anio INTEGER,
+      titulo TEXT,
+      texto TEXT,
+      organismo TEXT,
+      fecha_publicacion TEXT,
+      estado TEXT DEFAULT 'Vigente',
+      fuente_url TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS relaciones_normativas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      origen_id INTEGER,
+      destino_id INTEGER,
+      tipo_relacion TEXT,
+      FOREIGN KEY (origen_id) REFERENCES normas(id),
+      FOREIGN KEY (destino_id) REFERENCES normas(id)
+    );
   `);
 
   // Migration: add password to users
