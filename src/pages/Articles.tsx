@@ -14,6 +14,13 @@ export function Articles() {
   const [activeTag, setActiveTag] = useState('');
   const [newsLoading, setNewsLoading] = useState(false);
 
+  // Submit article state
+  const [submitTitle, setSubmitTitle] = useState('');
+  const [submitContent, setSubmitContent] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+
   const canPublish = user && (user.tier === 'basic' || user.tier === 'pro' || user.tier === 'admin' || user.tier === 'super_admin');
 
   const fetchNews = (q = '', tag = '') => {
@@ -54,6 +61,36 @@ export function Articles() {
   const allTags = [...new Set(news.flatMap((item: any) => 
     item.tags?.split(',').map((t: string) => t.trim()).filter(Boolean) || []
   ))];
+
+  const handleSubmitArticle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !canPublish) return;
+    setSubmitting(true);
+    setSubmitError('');
+    setSubmitSuccess(false);
+    try {
+      const res = await fetch('/api/articles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id)
+        },
+        body: JSON.stringify({ title: submitTitle, content: submitContent })
+      });
+      if (res.ok) {
+        setSubmitSuccess(true);
+        setSubmitTitle('');
+        setSubmitContent('');
+      } else {
+        const data = await res.json();
+        setSubmitError(data.error || 'Error al enviar artículo');
+      }
+    } catch (err) {
+      setSubmitError('Error de red al enviar artículo');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <motion.div
@@ -246,14 +283,38 @@ export function Articles() {
             </div>
           ) : (
           <><h2 className="text-2xl font-bold text-stone-900 mb-6">Publicá tu artículo</h2>
-          <form className="space-y-6" onSubmit={(e) => e.preventDefault()}>
+          {submitSuccess && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl mb-6">
+              ¡Artículo enviado con éxito! Será revisado por un administrador antes de su publicación.
+            </div>
+          )}
+          {submitError && (
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl mb-6">
+              {submitError}
+            </div>
+          )}
+          <form className="space-y-6" onSubmit={handleSubmitArticle}>
             <div>
               <label className="block text-sm font-semibold text-stone-900 mb-2">Título del artículo</label>
-              <input type="text" className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Ej: Análisis del fallo..." required />
+              <input 
+                type="text" 
+                value={submitTitle}
+                onChange={(e) => setSubmitTitle(e.target.value)}
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500" 
+                placeholder="Ej: Análisis del fallo..." 
+                required 
+              />
             </div>
             <div>
               <label className="block text-sm font-semibold text-stone-900 mb-2">Contenido</label>
-              <textarea rows={10} className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Escribí tu artículo acá..." required></textarea>
+              <textarea 
+                rows={10} 
+                value={submitContent}
+                onChange={(e) => setSubmitContent(e.target.value)}
+                className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500" 
+                placeholder="Escribí tu artículo acá..." 
+                required
+              />
             </div>
             <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 flex gap-3 items-start">
               <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
@@ -266,8 +327,12 @@ export function Articles() {
               <input type="checkbox" id="terms" required className="w-4 h-4 text-amber-600 rounded border-stone-300 focus:ring-amber-500" />
               <label htmlFor="terms" className="text-sm text-stone-600">Acepto los Términos y Condiciones y declaro ser el autor original del texto.</label>
             </div>
-            <button type="submit" className="w-full bg-amber-600 text-white font-bold py-4 rounded-xl hover:bg-amber-700 transition-colors">
-              Enviar para revisión
+            <button 
+              type="submit" 
+              disabled={submitting}
+              className="w-full bg-amber-600 text-white font-bold py-4 rounded-xl hover:bg-amber-700 transition-colors disabled:opacity-50"
+            >
+              {submitting ? 'Enviando...' : 'Enviar para revisión'}
             </button>
           </form>
           </>

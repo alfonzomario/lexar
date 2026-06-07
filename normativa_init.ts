@@ -2,29 +2,7 @@ import { db } from './src/db/index.js';
 
 // Extender la base de datos con las tablas de normativa
 export function initNormativaDb() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS normas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tipo TEXT,
-      numero TEXT,
-      anio INTEGER,
-      titulo TEXT,
-      texto TEXT,
-      organismo TEXT,
-      fecha_publicacion TEXT,
-      estado TEXT DEFAULT 'Vigente',
-      fuente_url TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS relaciones_normativas (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      origen_id INTEGER,
-      destino_id INTEGER,
-      tipo_relacion TEXT, -- 'modifica', 'reglamenta', 'cita'
-      FOREIGN KEY (origen_id) REFERENCES normas(id),
-      FOREIGN KEY (destino_id) REFERENCES normas(id)
-    );
-  `);
+  // Tablas de normativa gestionadas por Drizzle en src/db/schema.ts
 
   // Seed inicial de un par de leyes importantes
   const count = db.prepare('SELECT COUNT(*) as count FROM normas').get() as { count: number };

@@ -326,6 +326,16 @@ function initDb() {
       FOREIGN KEY (user_id) REFERENCES users(id),
       FOREIGN KEY (latinism_id) REFERENCES latinisms(id)
     );
+
+    CREATE TABLE IF NOT EXISTS job_applications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      cover_letter TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (job_id) REFERENCES jobs(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
   `);
 
   // Migration: add password to users

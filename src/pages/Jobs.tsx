@@ -24,6 +24,14 @@ export function Jobs() {
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setJobs(data))
       .catch(() => setJobs([]));
+
+    fetch('/api/me/applications', { headers: user ? { 'X-User-Id': String(user.id) } : {} })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: any[]) => {
+        const ids = data.map((a: any) => a.job_id);
+        setApplied(new Set(ids));
+      })
+      .catch(() => {});
   }, [isPro, user?.id]);
 
   const filtered = jobs.filter((j: any) =>
@@ -31,17 +39,32 @@ export function Jobs() {
     j.firm.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleApply = (e: React.FormEvent) => {
+  const handleApply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!applyingTo || !user) return;
     setSubmitting(true);
-    // Simulate submission (in production this would POST to an API)
-    setTimeout(() => {
-      setApplied(prev => new Set(prev).add(applyingTo.id));
-      setApplyingTo(null);
-      setCoverLetter('');
+    try {
+      const res = await fetch(`/api/jobs/${applyingTo.id}/apply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id),
+        },
+        body: JSON.stringify({ coverLetter }),
+      });
+      if (res.ok) {
+        setApplied(prev => new Set(prev).add(applyingTo.id));
+        setApplyingTo(null);
+        setCoverLetter('');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Error al postularse');
+      }
+    } catch (err) {
+      alert('Error de conexión');
+    } finally {
       setSubmitting(false);
-    }, 1000);
+    }
   };
 
   if (user && !isPro) {

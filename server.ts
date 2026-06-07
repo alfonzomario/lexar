@@ -22,21 +22,6 @@ import { authRoutes } from './src/backend/routes/auth.routes.js';
 async function startServer() {
   initNormativaDb();
 
-  // --- DB Migrations: add missing columns ---
-  try {
-    const cols = db.prepare("PRAGMA table_info(case_briefs)").all() as { name: string }[];
-    const colNames = cols.map(c => c.name);
-    if (!colNames.includes('dissents')) {
-      db.prepare('ALTER TABLE case_briefs ADD COLUMN dissents TEXT').run();
-      console.log('[Migration] Added dissents column to case_briefs');
-    }
-    if (!colNames.includes('full_text')) {
-      db.prepare('ALTER TABLE case_briefs ADD COLUMN full_text TEXT').run();
-      console.log('[Migration] Added full_text column to case_briefs');
-    }
-  } catch (e) {
-    // columns likely already exist
-  }
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   const httpServer = http.createServer(app);
@@ -689,6 +674,8 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
 
   // PDF Text Extraction Endpoint (fallback)
   app.post('/api/briefs/parse-pdf', upload.single('pdf'), async (req: Request & { file?: Express.Multer.File }, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para procesar documentos.' });
     if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo PDF.' });
     try {
       const parser = new PDFParse({ data: req.file.buffer });
@@ -758,6 +745,8 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   // --- Unified AI Document Analysis Endpoint ---
   // Sends PDF/images DIRECTLY to Gemini as inlineData for much better extraction
   app.post('/api/documents/ai-analyze', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para procesar documentos con IA.' });
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
 
@@ -850,6 +839,8 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
 
   // --- Legacy AI Parse Endpoint (text-only, kept for backwards compatibility) ---
   app.post('/api/briefs/ai-parse', async (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para usar esta herramienta.' });
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(503).json({ error: 'IA no configurada' });
     const { text } = req.body;
@@ -886,6 +877,8 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
 
   // --- Norma AI Parse Endpoint ---
   app.post('/api/normas/ai-parse', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para usar esta herramienta.' });
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
 
@@ -1034,6 +1027,70 @@ Respondé SOLO con JSON válido:
       ORDER BY date DESC
     `).all();
     res.json(articles);
+  });
+
+  // Submit article
+  app.post('/api/articles', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+    if (!user || !['basic', 'pro', 'admin', 'super_admin'].includes(user.tier)) {
+      return res.status(403).json({ error: 'Esta función requiere plan Basic o superior' });
+    }
+    const { title, content } = req.body;
+    if (!title || !content || !title.trim() || !content.trim()) {
+      return res.status(400).json({ error: 'Título y contenido son requeridos' });
+    }
+    try {
+      const now = new Date().toISOString();
+      const result = db.prepare(`
+        INSERT INTO articles (title, content, author_id, status, date)
+        VALUES (?, ?, ?, 'pending', ?)
+      `).run(title.trim(), content.trim(), userId, now);
+      res.status(201).json({ success: true, id: result.lastInsertRowid });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al enviar el artículo' });
+    }
+  });
+
+  // Get pending articles (super_admin only)
+  app.get('/api/articles/pending', (req, res) => {
+    const auth = requireSuperAdmin(req, res);
+    if (!auth) return;
+    const pending = db.prepare(`
+      SELECT articles.*, users.name as author_name, users.profile_role as author_role
+      FROM articles
+      JOIN users ON articles.author_id = users.id
+      WHERE articles.status = 'pending'
+      ORDER BY date DESC
+    `).all();
+    res.json(pending);
+  });
+
+  // Approve article (super_admin only)
+  app.patch('/api/articles/:id/approve', (req, res) => {
+    const auth = requireSuperAdmin(req, res);
+    if (!auth) return;
+    try {
+      const article = db.prepare('SELECT author_id FROM articles WHERE id = ?').get(req.params.id) as any;
+      if (!article) return res.status(404).json({ error: 'Artículo no encontrado' });
+      db.prepare("UPDATE articles SET status = 'published' WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al aprobar artículo' });
+    }
+  });
+
+  // Reject/Delete article (super_admin only)
+  app.patch('/api/articles/:id/reject', (req, res) => {
+    const auth = requireSuperAdmin(req, res);
+    if (!auth) return;
+    try {
+      db.prepare("UPDATE articles SET status = 'rejected' WHERE id = ?").run(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al rechazar artículo' });
+    }
   });
 
   // Universities
@@ -1323,6 +1380,51 @@ Respondé SOLO con JSON válido:
     }
     const jobs = db.prepare('SELECT * FROM jobs ORDER BY date DESC').all();
     res.json(jobs);
+  });
+
+  // Apply to a job (solo Pro y super_admin)
+  app.post('/api/jobs/:id/apply', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+    if (!user || (user.tier !== 'pro' && user.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'La Bolsa de Trabajo es exclusiva del plan Pro' });
+    }
+    const jobId = Number(req.params.id);
+    const { coverLetter } = req.body;
+    if (!coverLetter || !coverLetter.trim()) {
+      return res.status(400).json({ error: 'La carta de presentación es requerida' });
+    }
+    try {
+      // Check if already applied
+      const existing = db.prepare('SELECT id FROM job_applications WHERE job_id = ? AND user_id = ?').get(jobId, userId);
+      if (existing) {
+        return res.status(400).json({ error: 'Ya te has postulado a este puesto' });
+      }
+      const now = new Date().toISOString();
+      db.prepare('INSERT INTO job_applications (job_id, user_id, cover_letter, created_at) VALUES (?, ?, ?, ?)').run(jobId, userId, coverLetter.trim(), now);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al enviar la postulación' });
+    }
+  });
+
+  // Get current user's job applications
+  app.get('/api/me/applications', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    try {
+      const list = db.prepare(`
+        SELECT ja.*, j.title as job_title, j.firm as job_firm, j.location as job_location
+        FROM job_applications ja
+        JOIN jobs j ON ja.job_id = j.id
+        WHERE ja.user_id = ?
+        ORDER BY ja.created_at DESC
+      `).all(userId);
+      res.json(list);
+    } catch (e) {
+      res.status(500).json({ error: 'Error al obtener postulaciones' });
+    }
   });
 
   const requireBasicOrAbove = (req: express.Request, res: express.Response): number | null => {
@@ -1766,6 +1868,47 @@ Respondé SOLO con JSON válido:
     `).all();
     res.json(users);
   });
+  // Admin Endpoints
+  app.get('/api/admin/metrics', (req, res) => {
+    const adminId = getUserId(req);
+    if (!adminId) return res.status(401).json({ error: 'No autenticado' });
+    const admin = db.prepare('SELECT tier FROM users WHERE id = ?').get(adminId) as any;
+    if (!admin || admin.tier !== 'super_admin') return res.status(403).json({ error: 'Prohibido' });
+
+    const totalUsers = (db.prepare('SELECT COUNT(*) as count FROM users').get() as any).count;
+    const premiumUsers = (db.prepare("SELECT COUNT(*) as count FROM users WHERE tier IN ('pro', 'basic', 'super_admin', 'admin')").get() as any).count;
+    const totalBriefs = (db.prepare('SELECT COUNT(*) as count FROM case_briefs').get() as any).count;
+    const pendingNotes = (db.prepare("SELECT COUNT(*) as count FROM student_notes WHERE status = 'pending'").get() as any).count;
+    const pendingExams = (db.prepare("SELECT COUNT(*) as count FROM exams WHERE status = 'pending'").get() as any).count;
+    const pendingArticles = (db.prepare("SELECT COUNT(*) as count FROM articles WHERE status = 'pending'").get() as any).count;
+
+    res.json({
+      totalUsers,
+      premiumUsers,
+      totalBriefs,
+      pendingReports: pendingNotes + pendingExams + pendingArticles
+    });
+  });
+
+  app.get('/api/admin/content', (req, res) => {
+    const adminId = getUserId(req);
+    if (!adminId) return res.status(401).json({ error: 'No autenticado' });
+    const admin = db.prepare('SELECT tier FROM users WHERE id = ?').get(adminId) as any;
+    if (!admin || admin.tier !== 'super_admin') return res.status(403).json({ error: 'Prohibido' });
+
+    // For MVP, merge some briefs, normas, and articles
+    const briefs = db.prepare('SELECT id, title FROM case_briefs ORDER BY id DESC LIMIT 15').all() as any[];
+    const normas = db.prepare('SELECT id, titulo, estado FROM normas ORDER BY id DESC LIMIT 15').all() as any[];
+    const articles = db.prepare('SELECT id, title, status FROM articles ORDER BY id DESC LIMIT 15').all() as any[];
+    
+    const content = [
+      ...briefs.map((b: any) => ({ id: `brief_${b.id}`, title: b.title, type: 'Fallo', subject: '-', status: 'Publicado' })),
+      ...normas.map((n: any) => ({ id: `norma_${n.id}`, title: n.titulo, type: 'Normativa', subject: '-', status: n.estado || 'Vigente' })),
+      ...articles.map((a: any) => ({ id: `article_${a.id}`, title: a.title, type: 'Artículo', subject: '-', status: a.status === 'published' ? 'Publicado' : (a.status === 'pending' ? 'Pendiente' : 'Rechazado') }))
+    ];
+    res.json(content);
+  });
+
 
   app.get('/api/admin/users/all', (req, res) => {
     const adminId = getUserId(req);

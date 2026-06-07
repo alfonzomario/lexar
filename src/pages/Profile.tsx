@@ -11,7 +11,7 @@ export function Profile() {
   const { data: userData, isLoading } = useQuery({
     queryKey: ['meProfile'],
     queryFn: async () => {
-      const res = await fetch('/api/me');
+      const res = await fetch('/api/auth/me');
       if (!res.ok) throw new Error('Not auth');
       const data = await res.json();
       return data.user;
@@ -37,7 +37,7 @@ export function Profile() {
     );
   }
 
-  const views = userData.total_views || 0;
+  const views = userData.totalViews || 0;
   let nextTier = 'Basic';
   let nextTierGoal = 500;
   let currentTierName = 'Free';
@@ -74,7 +74,7 @@ export function Profile() {
         </div>
         <div className="flex-1">
           <h1 className="text-3xl font-bold tracking-tight text-stone-900">{userData.name}</h1>
-          <p className="text-stone-500 mt-1">{userData.email} · {userData.profile_role}</p>
+          <p className="text-stone-500 mt-1">{userData.email} · {userData.profileRole || userData.profile_role}</p>
           <div className="mt-4 flex flex-wrap gap-2 justify-center md:justify-start">
             <span className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-sm font-semibold uppercase tracking-wider">
               <Award className="w-4 h-4" /> Plan: {currentTierName}

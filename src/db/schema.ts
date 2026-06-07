@@ -38,7 +38,7 @@ export const caseBriefs = sqliteTable("case_briefs", {
 	timeline: text(),
 	citations: text(),
 	fullText: text("full_text"),
-	isDemo: numeric("is_demo").default(1),
+	isDemo: numeric("is_demo").default("1"),
 	subjectId: integer("subject_id"),
 });
 
@@ -55,7 +55,7 @@ export const outlines = sqliteTable("outlines", {
 	subjectId: integer("subject_id").references(() => subjects.id),
 	title: text().notNull(),
 	content: text(),
-	isDemo: numeric("is_demo").default(1),
+	isDemo: numeric("is_demo").default("1"),
 });
 
 export const quizzes = sqliteTable("quizzes", {
@@ -313,5 +313,13 @@ export const relacionesNormativas = sqliteTable("relaciones_normativas", {
 	origenId: integer("origen_id").references(() => normas.id),
 	destinoId: integer("destino_id").references(() => normas.id),
 	tipoRelacion: text("tipo_relacion"),
+});
+
+export const jobApplications = sqliteTable("job_applications", {
+	id: integer().primaryKey({ autoIncrement: true }),
+	jobId: integer("job_id").notNull().references(() => jobs.id),
+	userId: integer("user_id").notNull().references(() => users.id),
+	coverLetter: text("cover_letter").notNull(),
+	createdAt: text("created_at").notNull(),
 });
 
