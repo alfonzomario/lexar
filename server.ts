@@ -76,9 +76,13 @@ async function startServer() {
 
   let currentApiKeyIndex = 0;
 
-  const getGeminiClient = (): InstanceType<typeof GoogleGenAI> => {
+  const parseGeminiKeys = (): string[] => {
     const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    return rawKeys.split(',').map(k => k.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+  };
+
+  const getGeminiClient = (): InstanceType<typeof GoogleGenAI> => {
+    const keys = parseGeminiKeys();
     if (keys.length === 0) {
       throw new Error('IA no configurada. Agregá GEMINI_API_KEY en tu configuración.');
     }
@@ -87,8 +91,7 @@ async function startServer() {
   };
 
   const rotateGeminiKey = () => {
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length > 1) {
       currentApiKeyIndex = (currentApiKeyIndex + 1) % keys.length;
       console.warn(`[Gemini] Rotating API key to index ${currentApiKeyIndex + 1}/${keys.length}...`);
@@ -101,8 +104,7 @@ async function startServer() {
     retries = 1,
     delayMs = 2000
   ): Promise<any> => {
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length === 0) {
       throw new Error('IA no configurada. Agregá GEMINI_API_KEY en tu configuración.');
     }
@@ -110,26 +112,30 @@ async function startServer() {
     let lastError: any = null;
     for (let attempts = 0; attempts < keys.length; attempts++) {
       const ai = getGeminiClient();
-      for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-          return await ai.models.generateContent(params);
-        } catch (err: any) {
-          lastError = err;
-          const isRateLimit = err?.message?.includes('429') || err?.message?.includes('quota');
-          const isRetryable = isRateLimit || err?.message?.includes('500') || err?.message?.includes('503');
-          if (!isRetryable) {
-            throw err;
-          }
-          if (isRateLimit && keys.length > 1) {
-            rotateGeminiKey();
-            break; // Break retry loop to try the next key in the outer loop
-          }
-          if (attempt < retries) {
-            console.warn(`[Gemini] Attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`);
-            await new Promise(resolve => setTimeout(resolve, delayMs));
-            continue;
+      try {
+        return await ai.models.generateContent(params);
+      } catch (err: any) {
+        lastError = err;
+        console.error(`[Gemini] Key at index ${currentApiKeyIndex % keys.length} failed:`, err?.message || err);
+        
+        if (keys.length > 1) {
+          rotateGeminiKey();
+          continue; // Try the next key in the list
+        }
+
+        // Single key retry logic
+        const isRateLimit = err?.message?.includes('429') || err?.message?.includes('quota');
+        const isRetryable = isRateLimit || err?.message?.includes('500') || err?.message?.includes('503');
+        if (isRetryable) {
+          console.warn(`[Gemini] Attempt failed, retrying in ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          try {
+            return await ai.models.generateContent(params);
+          } catch (retryErr) {
+            lastError = retryErr;
           }
         }
+        break; // If only one key, don't loop
       }
     }
     throw lastError || new Error('All Gemini API keys failed');
@@ -171,8 +177,7 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
     const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
     if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) return res.status(403).json({ error: 'Solo plan Pro puede usar el resumen con IA' });
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada' });
     const brief = db.prepare('SELECT * FROM case_briefs WHERE id = ?').get(req.params.id) as any;
     if (!brief) return res.status(404).json({ error: 'Fallo no encontrado' });
@@ -197,8 +202,7 @@ async function startServer() {
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'Falta el mensaje' });
     }
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length === 0) {
       return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu configuración.' });
     }
@@ -246,8 +250,8 @@ async function startServer() {
           return res.json({ text });
         } catch (err: any) {
           lastError = err;
-          const isRateLimit = err?.message?.includes('429') || err?.message?.includes('quota');
-          if (isRateLimit && keys.length > 1) {
+          console.error(`[Gemini Chat] Key at index ${currentApiKeyIndex % keys.length} failed:`, err?.message || err);
+          if (keys.length > 1) {
             rotateGeminiKey();
             continue;
           }
@@ -268,8 +272,7 @@ async function startServer() {
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'Falta el mensaje' });
     }
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length === 0) {
       return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu configuración.' });
     }
@@ -308,8 +311,8 @@ async function startServer() {
           return res.json({ text });
         } catch (err: any) {
           lastError = err;
-          const isRateLimit = err?.message?.includes('429') || err?.message?.includes('quota');
-          if (isRateLimit && keys.length > 1) {
+          console.error(`[Gemini Chat] Key at index ${currentApiKeyIndex % keys.length} failed:`, err?.message || err);
+          if (keys.length > 1) {
             rotateGeminiKey();
             continue;
           }
@@ -633,8 +636,7 @@ async function startServer() {
     const subjectId = req.params.id;
     const subject = db.prepare('SELECT name, description FROM subjects WHERE id = ?').get(subjectId) as { name: string; description: string } | undefined;
     if (!subject) return res.status(404).json({ error: 'Materia no encontrada' });
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
     const count = typeof req.body?.count === 'number' ? Math.min(20, Math.max(1, req.body.count)) : 5;
     try {
@@ -816,8 +818,7 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   app.post('/api/documents/ai-analyze', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para procesar documentos con IA.' });
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
 
     const textInput = req.body?.text;
@@ -920,8 +921,7 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   app.post('/api/briefs/ai-parse', async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para usar esta herramienta.' });
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada' });
     const { text } = req.body;
     if (!text || typeof text !== 'string') return res.status(400).json({ error: 'Falta texto' });
@@ -958,8 +958,7 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   app.post('/api/normas/ai-parse', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para usar esta herramienta.' });
-    const rawKeys = process.env.GEMINI_API_KEY || '';
-    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    const keys = parseGeminiKeys();
     if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
 
     const textInput = req.body?.text;
