@@ -74,26 +74,65 @@ async function startServer() {
     }
   };
 
-  // --- Gemini helper with retry ---
+  let currentApiKeyIndex = 0;
+
+  const getGeminiClient = (): InstanceType<typeof GoogleGenAI> => {
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) {
+      throw new Error('IA no configurada. Agregá GEMINI_API_KEY en tu configuración.');
+    }
+    const key = keys[currentApiKeyIndex % keys.length];
+    return new GoogleGenAI({ apiKey: key });
+  };
+
+  const rotateGeminiKey = () => {
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length > 1) {
+      currentApiKeyIndex = (currentApiKeyIndex + 1) % keys.length;
+      console.warn(`[Gemini] Rotating API key to index ${currentApiKeyIndex + 1}/${keys.length}...`);
+    }
+  };
+
+  // --- Gemini helper with retry and key rotation ---
   const callGeminiWithRetry = async (
-    ai: InstanceType<typeof GoogleGenAI>,
     params: { model: string; contents: any; config?: any },
     retries = 1,
     delayMs = 2000
   ): Promise<any> => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        return await ai.models.generateContent(params);
-      } catch (err: any) {
-        const isRetryable = err?.message?.includes('429') || err?.message?.includes('500') || err?.message?.includes('503');
-        if (attempt < retries && isRetryable) {
-          console.warn(`[Gemini] Attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-          continue;
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) {
+      throw new Error('IA no configurada. Agregá GEMINI_API_KEY en tu configuración.');
+    }
+
+    let lastError: any = null;
+    for (let attempts = 0; attempts < keys.length; attempts++) {
+      const ai = getGeminiClient();
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          return await ai.models.generateContent(params);
+        } catch (err: any) {
+          lastError = err;
+          const isRateLimit = err?.message?.includes('429') || err?.message?.includes('quota');
+          const isRetryable = isRateLimit || err?.message?.includes('500') || err?.message?.includes('503');
+          if (!isRetryable) {
+            throw err;
+          }
+          if (isRateLimit && keys.length > 1) {
+            rotateGeminiKey();
+            break; // Break retry loop to try the next key in the outer loop
+          }
+          if (attempt < retries) {
+            console.warn(`[Gemini] Attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            continue;
+          }
         }
-        throw err;
       }
     }
+    throw lastError || new Error('All Gemini API keys failed');
   };
 
   // Router /api que recibe primero los DELETE (evita que Vite u otro middleware devuelva 404)
@@ -132,14 +171,14 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
     const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
     if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) return res.status(403).json({ error: 'Solo plan Pro puede usar el resumen con IA' });
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(503).json({ error: 'IA no configurada' });
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada' });
     const brief = db.prepare('SELECT * FROM case_briefs WHERE id = ?').get(req.params.id) as any;
     if (!brief) return res.status(404).json({ error: 'Fallo no encontrado' });
     try {
-      const ai = new GoogleGenAI({ apiKey });
       const prompt = `Resumí este fallo argentino en 3-4 párrafos claros: hechos relevantes, cuestión jurídica, doctrina aplicada y decisión. Lenguaje didáctico para estudiantes de Derecho. No des asesoramiento legal.\n\nFallo: ${brief.title}\nHechos: ${brief.facts || ''}\nCuestión: ${brief.issue || ''}\nRegla: ${brief.rule || ''}\nArgumentos: ${brief.reasoning || ''}\nDecisión: ${brief.holding || ''}`;
-      const result = await ai.models.generateContent({
+      const result = await callGeminiWithRetry({
         model: 'gemini-2.5-flash',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
       });
@@ -158,9 +197,10 @@ async function startServer() {
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'Falta el mensaje' });
     }
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({ error: 'IA no configurada. Obtené una API key gratis en https://aistudio.google.com/apikey y agregala en .env como GEMINI_API_KEY="tu_key". Reiniciá el servidor.' });
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) {
+      return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu configuración.' });
     }
     try {
       const brief = db.prepare(`
@@ -173,34 +213,48 @@ async function startServer() {
       `).get(briefId) as any;
       if (!brief) return res.status(404).json({ error: 'Fallo no encontrado' });
 
-      const ai = new GoogleGenAI({ apiKey });
-      const chat = ai.chats.create({
-        model: 'gemini-2.5-flash',
-        config: {
-          systemInstruction: `
-            Actúa como un experto en Jurisprudencia Argentina (Abogado Especialista). 
-            Tu objetivo es ayudar al usuario a entender el siguiente fallo:
-            
-            FALLO:
-            Autos: ${brief.title}
-            Hechos: ${brief.facts}
-            Cuestión Jurídica (Issue): ${brief.issue}
-            Regla / Doctrina: ${brief.rule}
-            Argumentos: ${brief.reasoning}
-            Decisión (Holding): ${brief.holding}
-            
-            REGLAS:
-            1. Explica en lenguaje claro pero jurídico.
-            2. NO des asesoramiento legal personalizado.
-            3. Si el fallo es complejo, desglosa los argumentos de forma didáctica.
-            4. Incluye el disclaimer: "Esto no es asesoramiento legal. Soy de uso educativo."
-            5. Formateá la respuesta en Markdown para que sea fácil de leer: usá párrafos separados por líneas en blanco, listas cuando convenga, y espaciado claro.
-          `,
-        },
-      });
-      const result = await chat.sendMessage({ message });
-      const text = result.text ?? '';
-      res.json({ text });
+      let lastError: any = null;
+      for (let attempts = 0; attempts < keys.length; attempts++) {
+        try {
+          const ai = getGeminiClient();
+          const chat = ai.chats.create({
+            model: 'gemini-2.5-flash',
+            config: {
+              systemInstruction: `
+                Actúa como un experto en Jurisprudencia Argentina (Abogado Especialista). 
+                Tu objetivo es ayudar al usuario a entender el siguiente fallo:
+                
+                FALLO:
+                Autos: ${brief.title}
+                Hechos: ${brief.facts}
+                Cuestión Jurídica (Issue): ${brief.issue}
+                Regla / Doctrina: ${brief.rule}
+                Argumentos: ${brief.reasoning}
+                Decisión (Holding): ${brief.holding}
+                
+                REGLAS:
+                1. Explica en lenguaje claro pero jurídico.
+                2. NO des asesoramiento legal personalizado.
+                3. Si el fallo es complejo, desglosa los argumentos de forma didáctica.
+                4. Incluye el disclaimer: "Esto no es asesoramiento legal. Soy de uso educativo."
+                5. Formateá la respuesta en Markdown para que sea fácil de leer: usá párrafos separados por líneas en blanco, listas cuando convenga, y espaciado claro.
+              `,
+            },
+          });
+          const result = await chat.sendMessage({ message });
+          const text = result.text ?? '';
+          return res.json({ text });
+        } catch (err: any) {
+          lastError = err;
+          const isRateLimit = err?.message?.includes('429') || err?.message?.includes('quota');
+          if (isRateLimit && keys.length > 1) {
+            rotateGeminiKey();
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastError || new Error('All Gemini API keys failed');
     } catch (err: any) {
       console.error('AI chat error (brief):', err);
       res.status(500).json({ error: 'Error de conexión con la IA. Por favor, reintenta.' });
@@ -214,40 +268,55 @@ async function startServer() {
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'Falta el mensaje' });
     }
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({ error: 'IA no configurada. Obtené una API key gratis en https://aistudio.google.com/apikey y agregala en .env como GEMINI_API_KEY="tu_key". Reiniciá el servidor.' });
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) {
+      return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu configuración.' });
     }
     try {
       const norma = db.prepare('SELECT * FROM normas WHERE id = ?').get(normaId) as any;
       if (!norma) return res.status(404).json({ error: 'Norma no encontrada' });
 
-      const ai = new GoogleGenAI({ apiKey });
-      const chat = ai.chats.create({
-        model: 'gemini-2.5-flash',
-        config: {
-          systemInstruction: `
-            Actúa como un experto en Derecho Argentino. 
-            Tu objetivo es ayudar al usuario a entender la siguiente norma:
-            
-            NORMA:
-            Título: ${norma.titulo}
-            Tipo: ${norma.tipo} ${norma.numero}/${norma.anio}
-            Organismo: ${norma.organismo}
-            Texto: ${norma.texto}
-            
-            REGLAS:
-            1. Explica en lenguaje claro pero profesional.
-            2. NO des asesoramiento legal personalizado.
-            3. Usa CITAS exactas (Art. X) cuando menciones la norma.
-            4. Incluye el disclaimer: "Esto no es asesoramiento legal" cuando corresponda.
-            5. Formateá la respuesta en Markdown: párrafos separados por líneas en blanco, listas si aplica, espaciado claro para lectura.
-          `,
-        },
-      });
-      const result = await chat.sendMessage({ message });
-      const text = result.text ?? '';
-      res.json({ text });
+      let lastError: any = null;
+      for (let attempts = 0; attempts < keys.length; attempts++) {
+        try {
+          const ai = getGeminiClient();
+          const chat = ai.chats.create({
+            model: 'gemini-2.5-flash',
+            config: {
+              systemInstruction: `
+                Actúa como un experto en Derecho Argentino. 
+                Tu objetivo es ayudar al usuario a entender la siguiente norma:
+                
+                NORMA:
+                Título: ${norma.titulo}
+                Tipo: ${norma.tipo} ${norma.numero}/${norma.anio}
+                Organismo: ${norma.organismo}
+                Texto: ${norma.texto}
+                
+                REGLAS:
+                1. Explica en lenguaje claro pero profesional.
+                2. NO des asesoramiento legal personalizado.
+                3. Usa CITAS exactas (Art. X) cuando menciones la norma.
+                4. Incluye el disclaimer: "Esto no es asesoramiento legal" cuando corresponda.
+                5. Formateá la respuesta en Markdown: párrafos separados por líneas en blanco, listas si aplica, espaciado claro para lectura.
+              `,
+            },
+          });
+          const result = await chat.sendMessage({ message });
+          const text = result.text ?? '';
+          return res.json({ text });
+        } catch (err: any) {
+          lastError = err;
+          const isRateLimit = err?.message?.includes('429') || err?.message?.includes('quota');
+          if (isRateLimit && keys.length > 1) {
+            rotateGeminiKey();
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastError || new Error('All Gemini API keys failed');
     } catch (err: any) {
       console.error('AI chat error (norma):', err);
       res.status(500).json({ error: 'Hubo un error al procesar tu consulta. Por favor, reintenta.' });
@@ -564,14 +633,14 @@ async function startServer() {
     const subjectId = req.params.id;
     const subject = db.prepare('SELECT name, description FROM subjects WHERE id = ?').get(subjectId) as { name: string; description: string } | undefined;
     if (!subject) return res.status(404).json({ error: 'Materia no encontrada' });
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(503).json({ error: 'IA no configurada. Obtené una API key gratis en https://aistudio.google.com/apikey y agregala en el archivo .env como GEMINI_API_KEY="tu_key". Luego reiniciá el servidor.' });
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
     const count = typeof req.body?.count === 'number' ? Math.min(20, Math.max(1, req.body.count)) : 5;
     try {
-      const ai = new GoogleGenAI({ apiKey });
       const prompt = `Generá exactamente ${count} flashcards de estudio para la materia de derecho "${subject.name}". ${subject.description ? `Contexto: ${subject.description}` : ''}
 Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (pregunta o término) y "back" (respuesta). Sin explicaciones, solo el array JSON. Ejemplo: [{"front":"¿Qué es el amparo?","back":"Acción constitucional para proteger derechos."}]`;
-      const response = await ai.models.generateContent({
+      const response = await callGeminiWithRetry({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: { responseMimeType: "application/json" }
@@ -747,8 +816,9 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   app.post('/api/documents/ai-analyze', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para procesar documentos con IA.' });
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
 
     const textInput = req.body?.text;
     const file = req.file;
@@ -758,7 +828,6 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
 
       // Get subjects list for auto-suggestion
       const allSubjects = db.prepare('SELECT name FROM subjects').all() as { name: string }[];
@@ -819,7 +888,7 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
         ];
       }
 
-      const response = await callGeminiWithRetry(ai, {
+      const response = await callGeminiWithRetry({
         model: 'gemini-2.5-flash',
         contents: [{ role: 'user', parts: contentParts }],
         config: { responseMimeType: 'application/json' }
@@ -851,18 +920,18 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   app.post('/api/briefs/ai-parse', async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para usar esta herramienta.' });
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(503).json({ error: 'IA no configurada' });
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada' });
     const { text } = req.body;
     if (!text || typeof text !== 'string') return res.status(400).json({ error: 'Falta texto' });
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
       const allSubjects = db.prepare('SELECT name FROM subjects').all() as { name: string }[];
       const subjectsList = allSubjects.map(s => s.name).join(', ');
       const systemPrompt = buildBriefAnalysisPrompt(subjectsList);
 
-      const response = await callGeminiWithRetry(ai, {
+      const response = await callGeminiWithRetry({
         model: 'gemini-2.5-flash',
         contents: systemPrompt + '\n\nTEXTO DEL DOCUMENTO:\n---\n' + text.substring(0, 80000) + '\n---',
         config: { responseMimeType: 'application/json' }
@@ -889,8 +958,9 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   app.post('/api/normas/ai-parse', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para usar esta herramienta.' });
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
+    const rawKeys = process.env.GEMINI_API_KEY || '';
+    const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
 
     const textInput = req.body?.text;
     const file = req.file;
@@ -900,7 +970,6 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
 
       const normaPrompt = `Eres un experto en legislación argentina. Recibís un documento legal (ley, decreto, resolución, acordada o constitución) y debés extraer los campos estructurados.
 
@@ -970,7 +1039,7 @@ Respondé SOLO con JSON válido:
         ];
       }
 
-      const response = await callGeminiWithRetry(ai, {
+      const response = await callGeminiWithRetry({
         model: 'gemini-2.5-flash',
         contents: [{ role: 'user', parts: contentParts }],
         config: { responseMimeType: 'application/json' }
