@@ -7,6 +7,6 @@ export default defineConfig({
   out: './src/db/migrations',
   dialect: 'sqlite',
   dbCredentials: {
-    url: process.env.DATABASE_PATH || './src/db/lexar.sqlite',
+    url: process.env.DATABASE_PATH || process.env.Database_path || process.env.database_path || './src/db/lexar.sqlite',
   },
 });

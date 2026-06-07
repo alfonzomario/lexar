@@ -780,16 +780,6 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
           return res.status(400).json({ error: `Formato no soportado: ${mimeType}. Usá PDF, DOCX, JPG o PNG.` });
         }
 
-        const base64Data = file.buffer.toString('base64');
-
-        // For PDFs and images, send directly to Gemini as inlineData
-        // Gemini can natively read PDFs, do OCR on images, etc.
-        contentParts = [
-          { inlineData: { mimeType, data: base64Data } },
-          { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
-        ];
-
-        // Also try to extract raw text as fallback for full_text storage
         if (mimeType === 'application/pdf') {
           try {
             const parser = new PDFParse({ data: file.buffer });
@@ -797,9 +787,29 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
             await parser.destroy();
             extractedText = pdfResult.text?.trim() || '';
           } catch (e) {
-            // OCR-only PDF, no text to extract — that's fine, Gemini handles it
+            console.error('[PDF Parse] text extraction failed:', e);
             extractedText = '';
           }
+
+          if (extractedText && extractedText.length > 1000) {
+            contentParts = [
+              { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO A ANALIZAR:\n---\n' + extractedText + '\n---' }
+            ];
+          } else {
+            const sizeInMb = file.size / (1024 * 1024);
+            if (sizeInMb > 15) {
+              return res.status(400).json({ error: 'El archivo PDF es escaneado (sin texto copiable) y demasiado grande para procesar (>15MB). Por favor, subí un documento con texto copiable o más corto.' });
+            }
+            contentParts = [
+              { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+              { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
+            ];
+          }
+        } else {
+          contentParts = [
+            { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+            { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
+          ];
         }
       } else {
         // Text input mode
@@ -921,19 +931,37 @@ Respondé SOLO con JSON válido:
       let extractedText = '';
 
       if (file) {
-        const base64Data = file.buffer.toString('base64');
-        contentParts = [
-          { inlineData: { mimeType: file.mimetype, data: base64Data } },
-          { text: normaPrompt + '\n\nAnalizá el documento adjunto y extraé la información.' }
-        ];
-        // Extract text for storage
-        if (file.mimetype === 'application/pdf') {
+        const mimeType = file.mimetype;
+        if (mimeType === 'application/pdf') {
           try {
             const parser = new PDFParse({ data: file.buffer });
             const pdfResult = await parser.getText();
             await parser.destroy();
             extractedText = pdfResult.text?.trim() || '';
-          } catch (e) { extractedText = ''; }
+          } catch (e) {
+            console.error('[PDF Parse Norma] text extraction failed:', e);
+            extractedText = '';
+          }
+
+          if (extractedText && extractedText.length > 1000) {
+            contentParts = [
+              { text: normaPrompt + '\n\nTEXTO DE LA NORMA A ANALIZAR:\n---\n' + extractedText + '\n---' }
+            ];
+          } else {
+            const sizeInMb = file.size / (1024 * 1024);
+            if (sizeInMb > 15) {
+              return res.status(400).json({ error: 'El archivo PDF es escaneado y demasiado grande (>15MB). Por favor, subí un documento con texto copiable o más corto.' });
+            }
+            contentParts = [
+              { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+              { text: normaPrompt + '\n\nAnalizá el documento adjunto y extraé la información.' }
+            ];
+          }
+        } else {
+          contentParts = [
+            { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+            { text: normaPrompt + '\n\nAnalizá el documento adjunto y extraé la información.' }
+          ];
         }
       } else {
         extractedText = textInput!.trim();

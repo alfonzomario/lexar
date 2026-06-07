@@ -23,7 +23,8 @@ export function PrivateNotesWidget() {
         }
     }, [isOpen, user, location]);
 
-    if (!user) return null; // Only logged-in users
+    const isBriefDetail = /^\/briefs\/[^/]+$/.test(location.pathname);
+    if (!user || isBriefDetail) return null; // Only logged-in users, and hide on brief details
 
     const handleSave = async () => {
         if (!note.trim()) return;
