@@ -48,6 +48,7 @@ function initDb() {
       timeline TEXT,
       citations TEXT,
       is_demo BOOLEAN DEFAULT 1,
+      dissents TEXT,
       subject_id INTEGER -- Legacy column, kept for backward compatibility during migration
     );
 
@@ -518,6 +519,14 @@ function initDb() {
   } catch {
     db.exec("ALTER TABLE case_briefs ADD COLUMN full_text TEXT");
     console.log('Added case_briefs.full_text column.');
+  }
+
+  // Migration: add dissents to case_briefs if missing
+  try {
+    db.prepare('SELECT dissents FROM case_briefs LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE case_briefs ADD COLUMN dissents TEXT");
+    console.log('Added case_briefs.dissents column.');
   }
 
   // Migration: add tags to news
