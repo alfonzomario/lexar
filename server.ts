@@ -21,6 +21,22 @@ import { authRoutes } from './src/backend/routes/auth.routes.js';
 
 async function startServer() {
   initNormativaDb();
+
+  // --- DB Migrations: add missing columns ---
+  try {
+    const cols = db.prepare("PRAGMA table_info(case_briefs)").all() as { name: string }[];
+    const colNames = cols.map(c => c.name);
+    if (!colNames.includes('dissents')) {
+      db.prepare('ALTER TABLE case_briefs ADD COLUMN dissents TEXT').run();
+      console.log('[Migration] Added dissents column to case_briefs');
+    }
+    if (!colNames.includes('full_text')) {
+      db.prepare('ALTER TABLE case_briefs ADD COLUMN full_text TEXT').run();
+      console.log('[Migration] Added full_text column to case_briefs');
+    }
+  } catch (e) {
+    // columns likely already exist
+  }
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   const httpServer = http.createServer(app);
@@ -70,6 +86,28 @@ async function startServer() {
       db.prepare("UPDATE users SET tier = 'pro' WHERE id = ?").run(user.id);
     } else if (impact >= 500 && user.tier === 'free') {
       db.prepare("UPDATE users SET tier = 'basic' WHERE id = ?").run(user.id);
+    }
+  };
+
+  // --- Gemini helper with retry ---
+  const callGeminiWithRetry = async (
+    ai: InstanceType<typeof GoogleGenAI>,
+    params: { model: string; contents: any; config?: any },
+    retries = 1,
+    delayMs = 2000
+  ): Promise<any> => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await ai.models.generateContent(params);
+      } catch (err: any) {
+        const isRetryable = err?.message?.includes('429') || err?.message?.includes('500') || err?.message?.includes('503');
+        if (attempt < retries && isRetryable) {
+          console.warn(`[Gemini] Attempt ${attempt + 1} failed, retrying in ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          continue;
+        }
+        throw err;
+      }
     }
   };
 
@@ -649,7 +687,7 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
     }
   });
 
-  // PDF Text Extraction Endpoint
+  // PDF Text Extraction Endpoint (fallback)
   app.post('/api/briefs/parse-pdf', upload.single('pdf'), async (req: Request & { file?: Express.Multer.File }, res) => {
     if (!req.file) return res.status(400).json({ error: 'No se recibió ningún archivo PDF.' });
     try {
@@ -665,7 +703,152 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
     }
   });
 
-  // AI Parse Endpoint with Gemini
+  // --- Build the AI prompt for case brief analysis ---
+  const buildBriefAnalysisPrompt = (subjectsList: string) => `Eres un asistente jurídico especializado en análisis de documentos legales argentinos.
+Recibís un documento legal y debés:
+1. PRIMERO: Determinar si es una sentencia/fallo judicial, una norma/ley, o un documento doctrinal.
+2. SEGUNDO: Extraer los campos estructurados correspondientes.
+
+REGLAS ESTRICTAS:
+- Sos un experto en análisis de jurisprudencia y normativa argentina. No inventes información que no esté en el documento.
+- Usá la terminología exacta del documento; no parafrasees ni simplifiques conceptos técnico-jurídicos.
+- Leé TODO el documento con atención, incluyendo encabezados, pies de página, sellos, firmas y anexos.
+- Si el documento está escaneado o tiene mala calidad, hacé tu mejor esfuerzo para extraer la información.
+
+## CAMPOS A EXTRAER (para sentencias/fallos):
+- "document_type": siempre "sentencia" para fallos judiciales, "norma" para leyes/decretos, "otro" para otros documentos.
+- "title": Carátula oficial del caso tal como figura en el encabezado (ej: "García, Juan c/ Estado Nacional s/ amparo"). Si no hay carátula, construila con Partes + Tipo de acción.
+- "court": Instancia y sala exacta (ej: "Cámara Nacional de Apelaciones en lo Civil, Sala C" o "CSJN").
+- "year": Año numérico de la fecha de la sentencia.
+- "parties": Formato "Actor c/ Demandado".
+- "facts": Conflicto que origina el caso: qué pasó, quiénes son las partes y qué se reclama. Máximo 5 oraciones con terminología del fallo.
+- "issue": En una sola PREGUNTA la cuestión jurídica central que el tribunal debe resolver.
+- "rule": En 2-3 oraciones la doctrina o regla de derecho que el tribunal establece o aplica.
+- "reasoning": En 3-5 oraciones los argumentos centrales del tribunal. Usá los conceptos jurídicos del fallo.
+- "holding": En 1-2 oraciones la decisión concreta (qué se ordenó, revocó, confirmó o declaró).
+- "dissents": Votos en disidencia con sus fundamentos. Si no hay, exactamente: "No presenta disidencias".
+- "relevance": En 1-2 oraciones por qué el fallo es jurídicamente significativo o crea precedente.
+- "keywords": Entre 5 y 10 términos jurídicos clave del fallo, separados por coma.
+- "timeline": Lista cronológica de hitos procesales con fecha. Máximo 10 ítems.
+- "citations": Lista EXHAUSTIVA de TODAS las normas y fallos citados. Para normas: Ley/Decreto/CN, número y artículo. Para fallos: carátula y referencia "Fallos:" si figura. Incluir el considerando donde se cita.
+- "suggested_subject": Sugerí UNA materia de esta lista que mejor se ajuste al tema del fallo: [${subjectsList}]. Si ninguna aplica, devolvé null.
+
+Si algún campo no se puede determinar del texto, devolvé null para ese campo.
+
+Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
+{
+  "document_type": "sentencia",
+  "title": "...",
+  "court": "...",
+  "year": 2024,
+  "parties": "...",
+  "facts": "...",
+  "issue": "...",
+  "rule": "...",
+  "reasoning": "...",
+  "holding": "...",
+  "dissents": "...",
+  "relevance": "...",
+  "keywords": "...",
+  "suggested_subject": "...",
+  "timeline": [{ "date": "...", "description": "..." }],
+  "citations": [{ "norm_name": "...", "considerando_ref": "..." }]
+}`;
+
+  // --- Unified AI Document Analysis Endpoint ---
+  // Sends PDF/images DIRECTLY to Gemini as inlineData for much better extraction
+  app.post('/api/documents/ai-analyze', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
+
+    const textInput = req.body?.text;
+    const file = req.file;
+
+    if (!file && (!textInput || typeof textInput !== 'string' || !textInput.trim())) {
+      return res.status(400).json({ error: 'Enviá un archivo o texto para analizar.' });
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+
+      // Get subjects list for auto-suggestion
+      const allSubjects = db.prepare('SELECT name FROM subjects').all() as { name: string }[];
+      const subjectsList = allSubjects.map(s => s.name).join(', ');
+      const systemPrompt = buildBriefAnalysisPrompt(subjectsList);
+
+      let contentParts: any[] = [];
+      let extractedText = '';
+
+      if (file) {
+        const mimeType = file.mimetype;
+        const supportedMimes = [
+          'application/pdf',
+          'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ];
+
+        if (!supportedMimes.includes(mimeType)) {
+          return res.status(400).json({ error: `Formato no soportado: ${mimeType}. Usá PDF, DOCX, JPG o PNG.` });
+        }
+
+        const base64Data = file.buffer.toString('base64');
+
+        // For PDFs and images, send directly to Gemini as inlineData
+        // Gemini can natively read PDFs, do OCR on images, etc.
+        contentParts = [
+          { inlineData: { mimeType, data: base64Data } },
+          { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
+        ];
+
+        // Also try to extract raw text as fallback for full_text storage
+        if (mimeType === 'application/pdf') {
+          try {
+            const parser = new PDFParse({ data: file.buffer });
+            const pdfResult = await parser.getText();
+            await parser.destroy();
+            extractedText = pdfResult.text?.trim() || '';
+          } catch (e) {
+            // OCR-only PDF, no text to extract — that's fine, Gemini handles it
+            extractedText = '';
+          }
+        }
+      } else {
+        // Text input mode
+        extractedText = textInput!.trim();
+        contentParts = [
+          { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO:\n---\n' + extractedText + '\n---' }
+        ];
+      }
+
+      const response = await callGeminiWithRetry(ai, {
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts: contentParts }],
+        config: { responseMimeType: 'application/json' }
+      });
+
+      const resultText = (response.text ?? '').trim();
+      let parsed;
+      try {
+        parsed = JSON.parse(resultText);
+      } catch (err) {
+        console.error('[AI Analyze] JSON parse failed:', resultText.substring(0, 200));
+        return res.status(502).json({ error: 'La IA no devolvió una respuesta válida. Intentá de nuevo.' });
+      }
+
+      // Attach the extracted raw text for full_text storage
+      parsed._extractedText = extractedText;
+
+      res.json(parsed);
+    } catch (e: any) {
+      console.error('[AI Analyze] Error:', e?.message || e);
+      if (e?.message?.includes('429') || e?.message?.includes('quota')) {
+        return res.status(429).json({ error: 'Se superó la cuota de la IA. Esperá unos minutos e intentá de nuevo.' });
+      }
+      res.status(500).json({ error: 'Error al analizar el documento con IA. Intentá de nuevo.' });
+    }
+  });
+
+  // --- Legacy AI Parse Endpoint (text-only, kept for backwards compatibility) ---
   app.post('/api/briefs/ai-parse', async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(503).json({ error: 'IA no configurada' });
@@ -674,83 +857,127 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
 
     try {
       const ai = new GoogleGenAI({ apiKey });
+      const allSubjects = db.prepare('SELECT name FROM subjects').all() as { name: string }[];
+      const subjectsList = allSubjects.map(s => s.name).join(', ');
+      const systemPrompt = buildBriefAnalysisPrompt(subjectsList);
 
-      // The full text is NOT processed by AI - it is kept verbatim.
-      // AI only extracts structured metadata fields.
-      const textToAnalyze = text.substring(0, 40000);
-
-      const prompt = `Eres un asistente jurídico especializado en análisis de sentencias judiciales argentinas.
-Tenés el texto de una sentencia y debés extraer ÚNICAMENTE los campos que se te piden, en formato JSON.
-
-REGLAS ESTRICTAS:
-- Sos un experto en análisis de jurisprudencia argentina. No inventes información que no esté en el texto.
-- Usá la terminología exacta del fallo; no parafrasees ni simplifiques conceptos técnico-jurídicos.
-- Para "title" extraé la carátula oficial del caso tal como figura en el encabezado (ej: "García, Juan c/ Estado Nacional s/ amparo"). Si no hay carátula, construila con Partes + Tipo de acción.
-- Para "court" indicá la instancia y sala exacta (ej: "Cámara Nacional de Apelaciones en lo Civil, Sala C" o "Corte Suprema de Justicia de la Nación").
-- Para "year" extraé solo el año numérico de la fecha de la sentencia.
-- Para "parties" usá el formato "Actor c/ Demandado".
-- Para "facts" describí brevemente el conflicto que origina el caso: qué pasó, quiénes son las partes y qué se reclama. Máximo 4 oraciones. Usá terminología del fallo.
-- Para "issue" enunciá en una sola PREGUNTA la cuestión jurídica central que el tribunal debe resolver.
-- Para "rule" describí en 2-3 oraciones la doctrina o regla de derecho que el tribunal establece o aplica.
-- Para "reasoning" describí en 3-5 oraciones los argumentos centrales del tribunal para llegar a su decisión. Usá los conceptos jurídicos del fallo.
-- Para "holding" describí en 1-2 oraciones la decisión concreta (qué se ordenó, revocó, confirmó o declaró).
-- Para "dissents" describí los votos en disidencia con sus fundamentos. Si no hay, escribí exactamente: "No presenta disidencias".
-- Para "relevance" explicá en 1-2 oraciones por qué el fallo es jurídicamente significativo o crea precedente.
-- Para "keywords" listá entre 4 y 8 términos jurídicos clave que aparezcan en el fallo, separados por coma.
-- Para "timeline" listá cronológicamente los hitos procesales importantes con su fecha. Máximo 8 ítems.
-- Para "citations" generá una lista TAXATIVA de TODAS las normas citadas: para cada una indicá Ley/Decreto/CN, número y artículo si están disponibles; para fallos precedentes indicá carátula y referencia "Fallos:" si figura. Incluí el considerando donde se cita.
-- Si algún campo no se puede determinar del texto, devolvé null.
-
-Respondé SOLO con el JSON, sin texto adicional ni markdown:
-{
-  "title": "Carátula oficial del caso",
-  "court": "Instancia y Sala que dicta sentencia",
-  "year": 2024,
-  "parties": "Actor c/ Demandado",
-  "facts": "Descripción breve del conflicto y lo reclamado",
-  "issue": "¿Pregunta jurídica central que resuelve el fallo?",
-  "rule": "Doctrina o regla jurídica establecida por el tribunal",
-  "reasoning": "Argumentos centrales del tribunal usando terminología del fallo",
-  "holding": "Decisión concreta adoptada",
-  "dissents": "Votos en disidencia y sus fundamentos, o 'No presenta disidencias'",
-  "relevance": "Importancia jurídica y valor de precedente",
-  "keywords": "término1, término2, término3, término4",
-  "timeline": [
-    { "date": "DD/MM/AAAA o 'Año'", "description": "Hito procesal" }
-  ],
-  "citations": [
-    { "norm_name": "Ley N° X, Art. Y / CN Art. Z / Fallo 'Apellido' (Fallos: Tomo:Pág.)", "considerando_ref": "Considerando N" }
-  ]
-}
-
-TEXTO DE LA SENTENCIA:
----
-${textToAnalyze}
----`;
-
-      const response = await ai.models.generateContent({
+      const response = await callGeminiWithRetry(ai, {
         model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
+        contents: systemPrompt + '\n\nTEXTO DEL DOCUMENTO:\n---\n' + text.substring(0, 80000) + '\n---',
+        config: { responseMimeType: 'application/json' }
       });
       const resultText = (response.text ?? '').trim();
       let parsed;
       try {
         parsed = JSON.parse(resultText);
       } catch (err) {
-        console.error("JSON parse AI", err);
-        throw err;
+        console.error('JSON parse AI', err);
+        return res.status(502).json({ error: 'La IA no devolvió JSON válido. Intentá de nuevo.' });
       }
       res.json(parsed);
-    } catch (e) {
+    } catch (e: any) {
       console.error('AI Parse Error:', e);
+      if (e?.message?.includes('429') || e?.message?.includes('quota')) {
+        return res.status(429).json({ error: 'Se superó la cuota de la IA. Esperá unos minutos.' });
+      }
       res.status(500).json({ error: 'Error al procesar con IA' });
+    }
+  });
+
+  // --- Norma AI Parse Endpoint ---
+  app.post('/api/normas/ai-parse', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
+
+    const textInput = req.body?.text;
+    const file = req.file;
+
+    if (!file && (!textInput || typeof textInput !== 'string' || !textInput.trim())) {
+      return res.status(400).json({ error: 'Enviá un archivo o texto para analizar.' });
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+
+      const normaPrompt = `Eres un experto en legislación argentina. Recibís un documento legal (ley, decreto, resolución, acordada o constitución) y debés extraer los campos estructurados.
+
+REGLAS:
+- Extraé la información exacta del documento, sin inventar.
+- Para "tipo" identificá si es Ley, Decreto, Resolución, Acordada o Constitución.
+- Para "numero" extraé solo el número de la norma (ej: "27541", "70/2023").
+- Para "anio" extraé el año de sanción o publicación.
+- Para "titulo" generá un título descriptivo si no hay uno explícito (ej: "Ley de Solidaridad Social y Reactivación Productiva").
+- Para "organismo" indicá quién emitió la norma (ej: "Congreso de la Nación", "Poder Ejecutivo Nacional", "BCRA").
+- Para "fecha_publicacion" extraé la fecha de publicación en formato YYYY-MM-DD si está disponible.
+- Para "texto_resumido" generá un resumen de 2-3 oraciones del contenido principal de la norma.
+- Para "keywords" listá 5-8 términos clave separados por coma.
+
+Respondé SOLO con JSON válido:
+{
+  "tipo": "Ley",
+  "numero": "27541",
+  "anio": 2019,
+  "titulo": "Título descriptivo de la norma",
+  "organismo": "Organismo emisor",
+  "fecha_publicacion": "2019-12-23",
+  "texto_resumido": "Resumen breve del contenido",
+  "keywords": "término1, término2, término3"
+}`;
+
+      let contentParts: any[] = [];
+      let extractedText = '';
+
+      if (file) {
+        const base64Data = file.buffer.toString('base64');
+        contentParts = [
+          { inlineData: { mimeType: file.mimetype, data: base64Data } },
+          { text: normaPrompt + '\n\nAnalizá el documento adjunto y extraé la información.' }
+        ];
+        // Extract text for storage
+        if (file.mimetype === 'application/pdf') {
+          try {
+            const parser = new PDFParse({ data: file.buffer });
+            const pdfResult = await parser.getText();
+            await parser.destroy();
+            extractedText = pdfResult.text?.trim() || '';
+          } catch (e) { extractedText = ''; }
+        }
+      } else {
+        extractedText = textInput!.trim();
+        contentParts = [
+          { text: normaPrompt + '\n\nTEXTO DE LA NORMA:\n---\n' + extractedText + '\n---' }
+        ];
+      }
+
+      const response = await callGeminiWithRetry(ai, {
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts: contentParts }],
+        config: { responseMimeType: 'application/json' }
+      });
+
+      const resultText = (response.text ?? '').trim();
+      let parsed;
+      try {
+        parsed = JSON.parse(resultText);
+      } catch (err) {
+        console.error('[Norma AI] JSON parse failed');
+        return res.status(502).json({ error: 'La IA no devolvió una respuesta válida.' });
+      }
+
+      parsed._extractedText = extractedText;
+      res.json(parsed);
+    } catch (e: any) {
+      console.error('[Norma AI Parse] Error:', e?.message || e);
+      if (e?.message?.includes('429')) {
+        return res.status(429).json({ error: 'Cuota de IA excedida. Esperá unos minutos.' });
+      }
+      res.status(500).json({ error: 'Error al analizar la norma con IA.' });
     }
   });
 
   // Create new Case Brief
   app.post('/api/briefs', (req, res) => {
-    const { title, facts, issue, rule, reasoning, holding, relevance, keywords, subject_id, court, year, parties, timeline, citations, full_text } = req.body;
+    const { title, facts, issue, rule, reasoning, holding, dissents, relevance, keywords, subject_id, court, year, parties, timeline, citations, full_text } = req.body;
 
     if (!title || !subject_id) {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
@@ -758,9 +985,9 @@ ${textToAnalyze}
 
     try {
       const result = db.prepare(`
-        INSERT INTO case_briefs (title, facts, issue, rule, reasoning, holding, relevance, keywords, is_demo, court, year, parties, timeline, citations, full_text) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
-      `).run(title, facts, issue, rule, reasoning, holding, relevance, keywords, court || null, year ? Number(year) : null, parties || null, timeline ? JSON.stringify(timeline) : null, citations ? JSON.stringify(citations) : null, full_text || null);
+        INSERT INTO case_briefs (title, facts, issue, rule, reasoning, holding, dissents, relevance, keywords, is_demo, court, year, parties, timeline, citations, full_text) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+      `).run(title, facts, issue, rule, reasoning, holding, dissents || null, relevance, keywords, court || null, year ? Number(year) : null, parties || null, timeline ? JSON.stringify(timeline) : null, citations ? JSON.stringify(citations) : null, full_text || null);
 
       const insertRelation = db.prepare('INSERT INTO case_brief_subjects (case_brief_id, subject_id) VALUES (?, ?)');
       insertRelation.run(result.lastInsertRowid, subject_id);

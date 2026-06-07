@@ -389,6 +389,18 @@ export function BriefDetail() {
                   </div>
                 </section>
 
+                {brief.dissents && brief.dissents !== 'No presenta disidencias' && (
+                  <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
+                    <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                      <Users className="w-5 h-5 text-rose-500" />
+                      Votos en Disidencia
+                    </h2>
+                    <div className="text-base md:text-lg text-stone-800 leading-[1.9] bg-rose-50/40 p-6 rounded-xl whitespace-pre-line border border-rose-100/50" style={{ fontFamily: "'Lora', Georgia, serif" }}>
+                      <HighlightableText text={formatParagraphs(brief.dissents)} annotations={annotations} onAddAnnotation={handleAddAnnotation} />
+                    </div>
+                  </section>
+                )}
+
                 <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
                   <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-3" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                     <Bookmark className="w-5 h-5 text-indigo-600" />

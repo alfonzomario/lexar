@@ -32,10 +32,12 @@ export const caseBriefs = sqliteTable("case_briefs", {
 	rule: text(),
 	reasoning: text(),
 	holding: text(),
+	dissents: text(),
 	relevance: text(),
 	keywords: text(),
 	timeline: text(),
 	citations: text(),
+	fullText: text("full_text"),
 	isDemo: numeric("is_demo").default(1),
 	subjectId: integer("subject_id"),
 });
