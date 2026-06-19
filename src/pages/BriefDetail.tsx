@@ -35,26 +35,80 @@ export function BriefDetail() {
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const textContainerRef = useRef<HTMLDivElement>(null);
+  const [shareDropdownOpen, setShareDropdownOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [userQuery, setUserQuery] = useState('');
+  const [searchedUsers, setSearchedUsers] = useState<any[]>([]);
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [isSharingInternal, setIsSharingInternal] = useState(false);
+  const [shareSuccess, setShareSuccess] = useState(false);
+  const shareDropdownRef = useRef<HTMLDivElement>(null);
   const isBasicOrAbove = user && ['basic', 'pro', 'admin', 'super_admin'].includes(user.tier);
   const isPro = user?.tier === 'pro' || user?.tier === 'admin' || user?.tier === 'super_admin';
 
-  const handleShare = async () => {
-    if (!brief) return;
-    const shareData = {
-      title: `${brief.title} - LexARG`,
-      text: brief.summary_tldr || brief.title,
-      url: window.location.href,
-    };
-    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
-      try {
-        await navigator.share(shareData);
-      } catch (err) {
-        console.log('Share aborted or failed:', err);
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    setShareDropdownOpen(false);
+  };
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (shareDropdownRef.current && !shareDropdownRef.current.contains(e.target as Node)) {
+        setShareDropdownOpen(false);
       }
-    } else {
-      navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  useEffect(() => {
+    if (userQuery.trim().length < 2) {
+      setSearchedUsers([]);
+      return;
+    }
+    const delayDebounce = setTimeout(() => {
+      fetch(`/api/users?q=${encodeURIComponent(userQuery)}`)
+        .then((r) => r.json())
+        .then((data) => setSearchedUsers(Array.isArray(data) ? data : []))
+        .catch(console.error);
+    }, 300);
+    return () => clearTimeout(delayDebounce);
+  }, [userQuery]);
+
+  const handleShareInternal = async () => {
+    if (!selectedUser || !brief) return;
+    setIsSharingInternal(true);
+    setShareSuccess(false);
+    try {
+      const res = await fetch('/api/messages/share', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          receiverId: selectedUser.id,
+          briefId: brief.id,
+          title: brief.title
+        })
+      });
+      if (res.ok) {
+        setShareSuccess(true);
+        setUserQuery('');
+        setSelectedUser(null);
+        setTimeout(() => {
+          setIsShareModalOpen(false);
+          setShareSuccess(false);
+        }, 1500);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSharingInternal(false);
     }
   };
 
@@ -133,12 +187,34 @@ export function BriefDetail() {
   };
 
   useEffect(() => {
+    if (activeTab !== 'full') return;
+    const handleScroll = () => {
+      const el = textContainerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const elementHeight = rect.height;
+      const viewHeight = window.innerHeight;
+      
+      const scrolled = -rect.top;
+      const maxScroll = elementHeight - viewHeight;
+      if (maxScroll <= 0) {
+        setScrollProgress(0);
+        return;
+      }
+      const progress = Math.min(100, Math.max(0, (scrolled / maxScroll) * 100));
+      setScrollProgress(progress);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    handleScroll();
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [activeTab]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-
-
-  const handleAddAnnotation = async (text: string, note: string) => {
+  const handleAddAnnotation = async (text: string, note: string, color: string) => {
     if (!user) return;
     const res = await fetch(`/api/briefs/${id}/annotations`, {
       method: 'POST',
@@ -147,7 +223,7 @@ export function BriefDetail() {
         user_id: user.id,
         selected_text: text,
         note: note,
-        color: 'bg-yellow-200 text-stone-900',
+        color: color,
       })
     });
     if (res.ok) {
@@ -173,12 +249,13 @@ export function BriefDetail() {
 
   useEffect(() => {
     if (activeAnnotationId) {
-      const cardEl = document.getElementById(`comment-card-${activeAnnotationId}`);
+      const prefix = focusMode ? 'comment-card-focus-' : 'comment-card-';
+      const cardEl = document.getElementById(`${prefix}${activeAnnotationId}`);
       if (cardEl) {
         cardEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
     }
-  }, [activeAnnotationId]);
+  }, [activeAnnotationId, focusMode]);
 
   const handleDeleteBrief = async () => {
     if (!window.confirm('¿Estás seguro de que querés eliminar este fallo y todas sus anotaciones?')) return;
@@ -243,6 +320,100 @@ export function BriefDetail() {
     { id: 'relacionados', name: 'Relacionados' },
   ];
 
+  if (focusMode && activeTab === 'full') {
+    return (
+      <div className="fixed inset-0 bg-[#FAF9F6] z-[9999] overflow-y-auto custom-scrollbar flex flex-col font-sans">
+        <div className="sticky top-0 bg-[#FAF9F6]/95 backdrop-blur-md border-b border-stone-200 z-50">
+          <div className="w-full h-1 bg-stone-200/50">
+            <div className="h-full bg-indigo-600 transition-all duration-75" style={{ width: `${scrollProgress}%` }} />
+          </div>
+          <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setFocusMode(false)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" /> Salir del Enfoque
+              </button>
+              <span className="text-stone-300">|</span>
+              <span className="text-stone-900 font-bold truncate max-w-lg">{brief.title}</span>
+            </div>
+            <div className="text-xs font-bold text-stone-500 uppercase tracking-widest">
+              Modo Enfoque
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 max-w-6xl w-full mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-10 gap-10 items-start">
+          <div ref={textContainerRef} className="lg:col-span-7 bg-[#FDFBF7] p-8 md:p-14 rounded-3xl border border-stone-200 shadow-[inset_0_2px_20px_rgba(0,0,0,0.04)] max-w-[800px] mx-auto w-full">
+            <div className="text-base text-stone-850 leading-relaxed text-justify">
+              <HighlightableText
+                text={brief.full_text || brief.facts || ''}
+                annotations={displayAnnotations}
+                onAddAnnotation={handleAddAnnotation}
+                activeAnnotationId={activeAnnotationId}
+                setActiveAnnotationId={setActiveAnnotationId}
+                hoveredAnnotationId={hoveredAnnotationId}
+                setHoveredAnnotationId={setHoveredAnnotationId}
+              />
+            </div>
+          </div>
+
+          <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-24 max-h-[80vh] overflow-y-auto pr-2 custom-scrollbar">
+            <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Bookmark className="w-4 h-4 text-indigo-600" />
+              Comentarios ({annotations.length})
+            </h3>
+            {annotations.length === 0 ? (
+              <div className="text-center py-12 bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
+                <p className="text-stone-400 text-sm font-medium">No hay comentarios en esta sentencia.</p>
+                <p className="text-stone-400 text-xs mt-2 leading-relaxed">Pincelá una parte del texto y hacé clic derecho para agregar un comentario.</p>
+              </div>
+            ) : (
+              annotations.map((ann) => {
+                const isHighlighted = ann.id === activeAnnotationId || ann.id === hoveredAnnotationId;
+                return (
+                  <div
+                    key={ann.id}
+                    id={`comment-card-focus-${ann.id}`}
+                    onClick={() => setActiveAnnotationId(ann.id)}
+                    onMouseEnter={() => setHoveredAnnotationId(ann.id)}
+                    onMouseLeave={() => setHoveredAnnotationId(null)}
+                    className={clsx(
+                      "p-4 rounded-2xl border transition-all duration-200 cursor-pointer shadow-sm text-left relative group font-sans",
+                      isHighlighted
+                        ? "bg-amber-50 border-amber-300 ring-2 ring-indigo-500/20 scale-[1.02]"
+                        : "bg-white border-stone-200 hover:border-amber-200"
+                    )}
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteAnnotation(ann.id);
+                      }}
+                      className="absolute top-3 right-3 text-stone-400 hover:text-red-650 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      title="Eliminar comentario"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                    <div className="text-xs text-stone-500 italic mb-2 line-clamp-2 border-l-2 border-indigo-200 pl-2">
+                      "{ann.selected_text}"
+                    </div>
+                    <p className="text-stone-800 text-sm font-medium pr-6 leading-relaxed">{ann.note}</p>
+                    <div className="mt-3 flex items-center justify-between text-[10px] text-stone-400 border-t border-stone-100 pt-2">
+                      <span className="font-semibold text-stone-500">Tú</span>
+                      <span>{ann.created_at ? new Date(ann.created_at).toLocaleString() : ''}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -276,9 +447,50 @@ export function BriefDetail() {
                   <Bookmark className={clsx('w-5 h-5', savedForLater && 'fill-current')} />
                 </button>
               )}
-              <button onClick={handleShare} className="p-2 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="Compartir link">
-                {copied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
-              </button>
+              <div className="relative" ref={shareDropdownRef}>
+                <button 
+                  onClick={() => setShareDropdownOpen(!shareDropdownOpen)} 
+                  className={clsx(
+                    "p-2 rounded-full transition-colors z-20",
+                    shareDropdownOpen ? "text-indigo-600 bg-indigo-50" : "text-stone-400 hover:text-indigo-600 hover:bg-indigo-50"
+                  )}
+                  title="Compartir..."
+                >
+                  <Share2 className="w-5 h-5" />
+                </button>
+
+                <AnimatePresence>
+                  {shareDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-stone-200 z-[100] overflow-hidden py-1"
+                    >
+                      <button
+                        onClick={handleCopyLink}
+                        className="w-full text-left px-4 py-2.5 text-sm text-stone-700 hover:bg-stone-50 flex items-center gap-2.5 transition-colors"
+                      >
+                        {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Share2 className="w-4 h-4 text-stone-400" />}
+                        <span>{copied ? '¡Copiado!' : 'Copiar URL pública'}</span>
+                      </button>
+                      
+                      {user && (
+                        <button
+                          onClick={() => {
+                            setShareDropdownOpen(false);
+                            setIsShareModalOpen(true);
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-sm text-stone-700 hover:bg-stone-50 flex items-center gap-2.5 transition-colors border-t border-stone-100"
+                        >
+                          <Users className="w-4 h-4 text-stone-400" />
+                          <span>Compartir en LexAR</span>
+                        </button>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
               <button onClick={handlePrint} className="p-2 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="Descargar PDF">
                 <Download className="w-5 h-5" />
               </button>
@@ -358,13 +570,30 @@ export function BriefDetail() {
 
       {/* Conditional layouts based on activeTab */}
       {activeTab === 'full' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-10 gap-8 items-start mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-10 gap-8 items-start mt-8 relative">
           {/* Left Column: Full Ruling Text (70% width) */}
-          <div className="lg:col-span-7 bg-[#FDFBF7] p-8 md:p-14 lg:p-20 rounded-3xl shadow-[inset_0_2px_20px_rgba(0,0,0,0.04)] border border-stone-200/60 w-full">
-            <h2 className="text-2xl md:text-3xl font-bold mb-10 text-stone-850 border-b border-stone-200 pb-6 text-center tracking-tight" style={{ fontFamily: "'Lora', Georgia, serif" }}>
-              Sentencia Completa
-            </h2>
-            <div className="text-base md:text-lg text-stone-850 leading-[1.9] whitespace-pre-line" style={{ fontFamily: "'Lora', Georgia, serif" }}>
+          <div 
+            ref={textContainerRef} 
+            className="lg:col-span-7 bg-[#FDFBF7] p-8 md:p-14 lg:p-20 rounded-3xl shadow-[inset_0_2px_20px_rgba(0,0,0,0.04)] border border-stone-200/60 w-full relative overflow-hidden"
+          >
+            {/* Reading Progress Bar */}
+            <div className="absolute top-0 left-0 right-0 h-1 bg-stone-200/50">
+              <div className="h-full bg-indigo-600 transition-all duration-75" style={{ width: `${scrollProgress}%` }} />
+            </div>
+
+            <div className="flex items-center justify-between mb-8 border-b border-stone-200 pb-6">
+              <h2 className="text-2xl md:text-3xl font-bold text-stone-850 tracking-tight" style={{ fontFamily: "'Lora', Georgia, serif" }}>
+                Sentencia Completa
+              </h2>
+              <button
+                onClick={() => setFocusMode(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors shadow-sm"
+              >
+                <Sparkles className="w-4 h-4" /> Modo Enfoque
+              </button>
+            </div>
+
+            <div className="text-base text-stone-850 leading-relaxed text-justify">
               <HighlightableText
                 text={brief.full_text || brief.facts || ''}
                 annotations={displayAnnotations}
@@ -659,6 +888,121 @@ export function BriefDetail() {
           </button>
         </div>
       )}
+
+      {/* Modal de Compartir Interno */}
+      <AnimatePresence>
+        {isShareModalOpen && (
+          <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl border border-stone-200 shadow-2xl max-w-md w-full overflow-hidden flex flex-col font-sans"
+            >
+              <div className="p-6 border-b border-stone-100 flex items-center justify-between">
+                <h3 className="text-lg font-bold text-stone-900">Compartir en LexAR</h3>
+                <button 
+                  onClick={() => {
+                    setIsShareModalOpen(false);
+                    setSelectedUser(null);
+                    setUserQuery('');
+                  }} 
+                  className="p-1 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-50 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                {shareSuccess ? (
+                  <div className="text-center py-8 space-y-3">
+                    <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-600">
+                      <Check className="w-6 h-6" />
+                    </div>
+                    <p className="text-sm font-semibold text-stone-900">¡Fallo compartido con éxito!</p>
+                    <p className="text-xs text-stone-500">Se le ha enviado un mensaje interno al usuario.</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-stone-500 leading-relaxed text-left">
+                      Buscá a otro usuario registrado en LexAR por su nombre o correo electrónico para enviarle el acceso directo a este fallo.
+                    </p>
+
+                    {/* Buscador */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Buscar usuario..."
+                        value={userQuery}
+                        onChange={(e) => setUserQuery(e.target.value)}
+                        className="w-full text-sm pl-4 pr-10 py-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-left"
+                      />
+                      <span className="absolute right-3 top-3 text-stone-400">
+                        <Users className="w-4 h-4" />
+                      </span>
+                    </div>
+
+                    {/* Lista de Resultados */}
+                    {searchedUsers.length > 0 && (
+                      <div className="border border-stone-150 rounded-xl max-h-48 overflow-y-auto divide-y divide-stone-100 bg-white">
+                        {searchedUsers.map((u) => (
+                          <button
+                            key={u.id}
+                            onClick={() => {
+                              setSelectedUser(u);
+                              setUserQuery('');
+                              setSearchedUsers([]);
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-xs hover:bg-stone-50 transition-colors flex items-center justify-between"
+                          >
+                            <div>
+                              <p className="font-semibold text-stone-800">{u.name}</p>
+                              <p className="text-stone-400">{u.email}</p>
+                            </div>
+                            <span className="text-[10px] bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">
+                              {u.profileRole || 'Usuario'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Usuario Seleccionado */}
+                    {selectedUser && (
+                      <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-4 flex items-center justify-between text-left">
+                        <div>
+                          <p className="text-xs font-bold text-indigo-900">Destinatario seleccionado:</p>
+                          <p className="text-sm font-semibold text-stone-850">{selectedUser.name}</p>
+                          <p className="text-xs text-stone-500">{selectedUser.email}</p>
+                        </div>
+                        <button 
+                          onClick={() => setSelectedUser(null)}
+                          className="text-xs text-red-600 hover:underline font-medium"
+                        >
+                          Cambiar
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Botón de Enviar */}
+                    <button
+                      onClick={handleShareInternal}
+                      disabled={isSharingInternal || !selectedUser}
+                      className="w-full py-3 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                    >
+                      {isSharingInternal ? (
+                        <span>Compartiendo...</span>
+                      ) : (
+                        <span>Compartir Fallo</span>
+                      )}
+                    </button>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

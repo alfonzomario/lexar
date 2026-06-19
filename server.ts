@@ -3012,12 +3012,22 @@ Respondé SOLO con JSON válido:
 
   // Users
   app.get('/api/users', (req, res) => {
-    const users = db.prepare(`
-      SELECT users.id, users.name, users.email, users.tier, users.university, users.profile_role
-      FROM users
-      WHERE users.tier IN ('pro', 'admin', 'super_admin')
-      ORDER BY users.name ASC
-    `).all();
+    const q = req.query.q;
+    let users;
+    if (q && typeof q === 'string') {
+      users = db.prepare(`
+        SELECT users.id, users.name, users.email, users.tier, users.university, users.profile_role
+        FROM users
+        WHERE (users.name LIKE ? OR users.email LIKE ?)
+        ORDER BY users.name ASC
+      `).all(`%${q}%`, `%${q}%`);
+    } else {
+      users = db.prepare(`
+        SELECT users.id, users.name, users.email, users.tier, users.university, users.profile_role
+        FROM users
+        ORDER BY users.name ASC
+      `).all();
+    }
     res.json(users);
   });
   // Admin Endpoints
@@ -3221,6 +3231,53 @@ Respondé SOLO con JSON válido:
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: 'Error al obtener total de no leídos' });
+    }
+  });
+
+  // Share brief with another user
+  app.post('/api/messages/share', (req, res) => {
+    const senderId = getUserId(req);
+    if (!senderId) return res.status(401).json({ error: 'Usuario no identificado' });
+    
+    const { receiverId, briefId, title } = req.body;
+    if (!receiverId || !briefId || !title) {
+      return res.status(400).json({ error: 'Datos incompletos' });
+    }
+
+    const timestamp = new Date().toISOString();
+    const content = `Te compartió el fallo: **[${title}](/briefs/${briefId})**`;
+
+    try {
+      const result = db.prepare(
+        'INSERT INTO messages (sender_id, receiver_id, content, timestamp, is_read) VALUES (?, ?, ?, ?, 0)'
+      ).run(senderId, receiverId, content, timestamp);
+
+      const newMessage = {
+        id: result.lastInsertRowid,
+        sender_id: senderId,
+        receiver_id: receiverId,
+        content,
+        timestamp,
+        is_read: 0
+      };
+
+      const receiverSockets = onlineUsers.get(Number(receiverId));
+      if (receiverSockets) {
+        receiverSockets.forEach(socketId => {
+          io.to(socketId).emit('message', newMessage);
+        });
+      }
+      const senderSockets = onlineUsers.get(senderId);
+      if (senderSockets) {
+        senderSockets.forEach(socketId => {
+          io.to(socketId).emit('message', newMessage);
+        });
+      }
+
+      res.json({ success: true, message: newMessage });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al compartir el fallo' });
     }
   });
 

@@ -14,22 +14,54 @@ interface Annotation {
 interface HighlightableTextProps {
     text: string;
     annotations: Annotation[];
-    onAddAnnotation: (text: string, note: string) => Promise<void>;
+    onAddAnnotation: (text: string, note: string, color: string) => Promise<void>;
     activeAnnotationId?: number | null;
     setActiveAnnotationId?: (id: number | null) => void;
     hoveredAnnotationId?: number | null;
     setHoveredAnnotationId?: (id: number | null) => void;
 }
 
+export const highlightColors = [
+    { id: 'bg-yellow-100', name: 'Amarillo', colorClass: 'bg-yellow-100 text-stone-900 border-b border-yellow-400 hover:bg-yellow-200', activeClass: 'bg-yellow-300 text-stone-900 border-b border-yellow-500', hex: '#FEF08A' },
+    { id: 'bg-emerald-100', name: 'Verde', colorClass: 'bg-emerald-100 text-stone-900 border-b border-emerald-400 hover:bg-emerald-200', activeClass: 'bg-emerald-300 text-stone-900 border-b border-emerald-500', hex: '#A7F3D0' },
+    { id: 'bg-sky-100', name: 'Azul', colorClass: 'bg-sky-100 text-stone-900 border-b border-sky-400 hover:bg-sky-200', activeClass: 'bg-sky-300 text-stone-900 border-b border-sky-500', hex: '#BAE6FD' },
+    { id: 'bg-pink-100', name: 'Rosa', colorClass: 'bg-pink-100 text-stone-900 border-b border-pink-400 hover:bg-pink-200', activeClass: 'bg-pink-300 text-stone-900 border-b border-pink-500', hex: '#FBCFE8' },
+    { id: 'bg-purple-100', name: 'Púrpura', colorClass: 'bg-purple-100 text-stone-900 border-b border-purple-400 hover:bg-purple-200', activeClass: 'bg-purple-300 text-stone-900 border-b border-purple-500', hex: '#E9D5FF' }
+];
+
+export const getColorClasses = (colorStr: string, isHighlighted: boolean) => {
+    const baseColor = colorStr ? colorStr.split(' ')[0] : 'bg-yellow-100';
+    const found = highlightColors.find(c => c.id === baseColor);
+    if (found) {
+        return isHighlighted ? found.activeClass : found.colorClass;
+    }
+    return isHighlighted ? 'bg-yellow-300 text-stone-900 border-b border-yellow-500' : 'bg-yellow-100 text-stone-900 border-b border-yellow-400 hover:bg-yellow-200';
+};
+
 function cleanOcrText(rawText: string): string {
     if (!rawText) return '';
+    
+    // Normalize newlines
     let cleaned = rawText
         .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .replace(/\t/g, ' ')
+        .replace(/\r/g, '\n');
+
+    // 1. Join hyphenated words (e.g. conside- / rando or conside-\nrando)
+    cleaned = cleaned.replace(/([a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]+)-\s*(?:\/)?\s*\n?\s*([a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]+)/g, '$1$2');
+
+    // 2. Protect paragraph breaks (double newlines or more) with a placeholder
+    cleaned = cleaned.replace(/\n\s*\n+/g, '___PARAGRAPH___');
+
+    // 3. Replace single newlines within paragraphs with a space
+    cleaned = cleaned.replace(/\n/g, ' ');
+
+    // 4. Restore paragraph breaks
+    cleaned = cleaned.replace(/___PARAGRAPH___/g, '\n\n');
+
+    // 5. Clean up duplicate spaces
+    cleaned = cleaned.replace(/\t/g, ' ')
         .replace(/[ ]{2,}/g, ' ');
-    // Join lines that end with letters and start with letters (broken by PDF columns)
-    cleaned = cleaned.replace(/([a-záéíóúñü,;])\n([a-záéíóúñü])/g, '$1 $2');
+
     return cleaned.trim();
 }
 
@@ -46,6 +78,7 @@ export function HighlightableText({
     const [popoverPos, setPopoverPos] = useState<{ x: number; y: number } | null>(null);
     const [isAnnotating, setIsAnnotating] = useState(false);
     const [noteContent, setNoteContent] = useState('');
+    const [selectedColor, setSelectedColor] = useState('bg-yellow-100');
     const [isSaving, setIsSaving] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -114,6 +147,7 @@ export function HighlightableText({
         setPopoverPos(null);
         setSelectedText('');
         setNoteContent('');
+        setSelectedColor('bg-yellow-100');
         window.getSelection()?.removeAllRanges();
     };
 
@@ -121,7 +155,7 @@ export function HighlightableText({
         if (!noteContent.trim() || !selectedText) return;
         setIsSaving(true);
         try {
-            await onAddAnnotation(selectedText, noteContent);
+            await onAddAnnotation(selectedText, noteContent, selectedColor);
             handleCancel();
         } catch (e) {
             console.error(e);
@@ -165,10 +199,9 @@ export function HighlightableText({
                                     onMouseEnter={() => setHoveredAnnotationId(ann.id)}
                                     onMouseLeave={() => setHoveredAnnotationId(null)}
                                     className={clsx(
-                                        "cursor-pointer rounded px-1 transition-all duration-200 border-b border-amber-400 select-all",
-                                        isHighlighted 
-                                            ? "bg-amber-300 ring-2 ring-indigo-500/50 shadow-sm scale-[1.01]" 
-                                            : "bg-amber-100 text-stone-900 hover:bg-amber-200"
+                                        "cursor-pointer rounded px-1 transition-all duration-200 select-all",
+                                        isHighlighted && "ring-2 ring-indigo-500/50 shadow-sm scale-[1.01]",
+                                        getColorClasses(ann.color, isHighlighted)
                                     )}
                                 >
                                     {p}
@@ -198,12 +231,10 @@ export function HighlightableText({
                 {paragraphs.map((p, idx) => (
                     <p
                         key={idx}
-                        className="text-[17px] md:text-[18.5px] text-stone-800 leading-[2.1] text-justify my-5 first:mt-0 font-serif"
+                        className="text-base text-stone-850 text-justify my-4 first:mt-0 font-sans"
                         style={{
-                            fontFamily: "'Lora', Georgia, serif",
-                            wordSpacing: '0.04em',
-                            letterSpacing: '0.01em',
-                            textIndent: '2em'
+                            fontFamily: "'Inter', 'Roboto', sans-serif",
+                            lineHeight: '1.6'
                         }}
                     >
                         {renderTextWithHighlights(p, idx)}
@@ -237,6 +268,22 @@ export function HighlightableText({
                                         placeholder="Escribí tu comentario aquí..."
                                         className="w-full text-sm p-3 border border-stone-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none h-24 resize-none mb-3 bg-white"
                                     />
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <span className="text-[10px] uppercase tracking-wider font-bold text-stone-500 mr-1">Color:</span>
+                                        {highlightColors.map((color) => (
+                                            <button
+                                                key={color.id}
+                                                type="button"
+                                                onClick={() => setSelectedColor(color.id)}
+                                                className={clsx(
+                                                    "w-5 h-5 rounded-full border transition-all duration-150 scale-100 hover:scale-110",
+                                                    selectedColor === color.id ? "ring-2 ring-indigo-500 border-transparent scale-110" : "border-stone-300"
+                                                )}
+                                                style={{ backgroundColor: color.hex }}
+                                                title={color.name}
+                                            />
+                                        ))}
+                                    </div>
                                     <div className="flex justify-end gap-2">
                                         <button onClick={handleCancel} className="px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-100 rounded-lg">Cancelar</button>
                                         <button
