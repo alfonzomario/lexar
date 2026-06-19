@@ -28,3 +28,36 @@
   background: #a8a29e;
   /* stone-400 */
 }
+
+/* Print Stylesheet */
+@media print {
+  nav, 
+  header, 
+  footer, 
+  aside,
+  button,
+  .no-print, 
+  [role="button"],
+  .lg\:col-span-1,
+  .fixed.bottom-6.right-6,
+  .fixed.inset-y-0.right-0,
+  a[href^="/"] {
+    display: none !important;
+  }
+  
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 12pt;
+    line-height: 1.5;
+  }
+  
+  .max-w-7xl, .lg\:col-span-2, .bg-white {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}

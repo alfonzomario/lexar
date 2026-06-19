@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2, School, Calendar, Filter, ChevronDown, GraduationCap } from 'lucide-react';
+import { UserRoleBadge } from '../components/UserRoleBadge';
+import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2, School, Calendar, Filter, ChevronDown, GraduationCap, ThumbsUp, ThumbsDown, Bookmark, Send, PencilLine, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { useAuth } from '../contexts/AuthContext';
@@ -72,9 +73,120 @@ export function Notes() {
     subject_id: '',
     university_id: '',
     year: '',
-    chair_id: '',
+    chair_name: '',
     profesor: '',
   });
+
+  const [comments, setComments] = useState<any[]>([]);
+  const [newComment, setNewComment] = useState('');
+  const [isSaved, setIsSaved] = useState(false);
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const [voteState, setVoteState] = useState<{ vote: number; likes: number; dislikes: number }>({ vote: 0, likes: 0, dislikes: 0 });
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editCommentContent, setEditCommentContent] = useState('');
+  const [isSavingComment, setIsSavingComment] = useState(false);
+
+  // Edit / Delete states & handlers
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingNote, setEditingNote] = useState<any | null>(null);
+  const [editNoteForm, setEditNoteForm] = useState({
+    title: '',
+    file_url: '',
+    description: '',
+    subject_id: '',
+    university_id: '',
+    year: '',
+    chair_name: '',
+    profesor: '',
+  });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const handleEditNote = (note: any) => {
+    setEditingNote(note);
+    setEditNoteForm({
+      title: note.title || '',
+      file_url: note.file_url || '',
+      description: note.content || '',
+      subject_id: String(note.subject_id || ''),
+      university_id: String(note.university_id || ''),
+      year: String(note.year || ''),
+      chair_name: note.chair_name || '',
+      profesor: note.professor || '',
+    });
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingNote) return;
+    setIsSavingEdit(true);
+    try {
+      const res = await fetch(`/api/notes/${editingNote.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: editNoteForm.title,
+          content: editNoteForm.description,
+          file_url: editNoteForm.file_url,
+          year: editNoteForm.year,
+          chair_name: editNoteForm.chair_name,
+          professor: editNoteForm.profesor,
+          subject_id: editNoteForm.subject_id,
+          university_id: editNoteForm.university_id,
+        })
+      });
+      if (res.ok) {
+        setIsEditModalOpen(false);
+        setEditingNote(null);
+        queryClient.invalidateQueries({ queryKey: ['notes'] });
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Error al actualizar el apunte');
+      }
+    } catch (err) {
+      alert('Error de conexión');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleDeleteNote = async (id: number) => {
+    if (!window.confirm('¿Estás seguro de que querés eliminar este apunte?')) return;
+    try {
+      const res = await fetch(`/api/notes/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        queryClient.invalidateQueries({ queryKey: ['notes'] });
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Error al eliminar');
+      }
+    } catch (err) {
+      alert('Error de conexión');
+    }
+  };
+
+  const fetchNoteDetails = async (noteId: number) => {
+    try {
+      const cRes = await fetch(`/api/comments/note/${noteId}`);
+      if (cRes.ok) {
+        const cData = await cRes.json();
+        setComments(cData);
+      }
+      if (user) {
+        const sRes = await fetch(`/api/saved-for-later/check?resource_type=note&resource_id=${noteId}`);
+        if (sRes.ok) {
+          const sData = await sRes.json();
+          setIsSaved(sData.saved);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching note details:', err);
+    }
+  };
 
   const isPremium = user && ['pro', 'admin', 'super_admin'].includes(user.tier);
 
@@ -136,7 +248,7 @@ export function Notes() {
       return response.json();
     },
     onSuccess: () => {
-      setNewNote({ title: '', file_url: '', description: '', subject_id: '', university_id: '', year: '', chair_id: '', profesor: '' });
+      setNewNote({ title: '', file_url: '', description: '', subject_id: '', university_id: '', year: '', chair_name: '', profesor: '' });
       setIsModalOpen(false);
       queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
@@ -161,15 +273,24 @@ export function Notes() {
       description: newNote.description,
       subject_id: newNote.subject_id,
       university_id: newNote.university_id || null,
-      year: newNote.year ? parseInt(newNote.year, 10) : null,
-      chair_id: newNote.chair_id || null,
+      year: newNote.year || null,
+      chair_name: newNote.chair_name || null,
       profesor: newNote.profesor || null,
     });
   };
 
   const openPreview = async (note: any) => {
     setPreviewNote(note);
+    setVoteState({
+      vote: note.user_vote || 0,
+      likes: note.likes_count || 0,
+      dislikes: note.dislikes_count || 0
+    });
+    setComments([]);
+    setIsSaved(false);
     setPreviewLoading(true);
+
+    fetchNoteDetails(note.id);
 
     // Increment view count
     try {
@@ -182,6 +303,127 @@ export function Notes() {
 
     // Loading ends when iframe fires onLoad, or after timeout
     setTimeout(() => setPreviewLoading(false), 3000);
+  };
+
+  const handleVote = async (voteVal: number) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/notes/${previewNote.id}/vote`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id)
+        },
+        body: JSON.stringify({ vote: voteVal }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setVoteState({
+          vote: data.user_vote,
+          likes: data.likes_count,
+          dislikes: data.dislikes_count
+        });
+        queryClient.invalidateQueries({ queryKey: ['notes'] });
+      }
+    } catch (err) {
+      console.error('Error voting:', err);
+    }
+  };
+
+  const handleToggleSave = async () => {
+    if (!user) return;
+    try {
+      if (isSaved) {
+        const res = await fetch(`/api/saved-for-later?resource_type=note&resource_id=${previewNote.id}`, {
+          method: 'DELETE',
+          headers: { 'X-User-Id': String(user.id) }
+        });
+        if (res.ok) {
+          setIsSaved(false);
+          queryClient.invalidateQueries({ queryKey: ['notes'] });
+        }
+      } else {
+        const res = await fetch('/api/saved-for-later', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-User-Id': String(user.id)
+          },
+          body: JSON.stringify({ resource_type: 'note', resource_id: previewNote.id }),
+        });
+        if (res.ok) {
+          setIsSaved(true);
+          queryClient.invalidateQueries({ queryKey: ['notes'] });
+        }
+      }
+    } catch (err) {
+      console.error('Error saving:', err);
+    }
+  };
+
+  const handleSendComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newComment.trim()) return;
+    setSubmittingComment(true);
+    try {
+      const res = await fetch(`/api/comments/note/${previewNote.id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id)
+        },
+        body: JSON.stringify({ content: newComment }),
+      });
+      if (res.ok) {
+        setNewComment('');
+        fetchNoteDetails(previewNote.id);
+      }
+    } catch (err) {
+      console.error('Error posting comment:', err);
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
+
+  const handleUpdateComment = async (commentId: number) => {
+    if (!editCommentContent.trim()) return;
+    setIsSavingComment(true);
+    try {
+      const res = await fetch(`/api/comments/${commentId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user?.id)
+        },
+        body: JSON.stringify({ content: editCommentContent.trim() }),
+      });
+      if (res.ok) {
+        setEditingCommentId(null);
+        setEditCommentContent('');
+        if (previewNote) fetchNoteDetails(previewNote.id);
+      }
+    } catch (err) {
+      console.error('Error updating comment:', err);
+    } finally {
+      setIsSavingComment(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: number) => {
+    if (!window.confirm('¿Estás seguro de que querés eliminar este comentario?')) return;
+    try {
+      const res = await fetch(`/api/comments/${commentId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-User-Id': String(user?.id)
+        }
+      });
+      if (res.ok) {
+        if (previewNote) fetchNoteDetails(previewNote.id);
+      }
+    } catch (err) {
+      console.error('Error deleting comment:', err);
+    }
   };
 
   const handleDownload = (note: any) => {
@@ -376,6 +618,45 @@ export function Notes() {
                 <Eye className="w-3.5 h-3.5 text-stone-400" /> {note.views}
               </div>
 
+              {/* Bookmark button on card */}
+              {user && (
+                <button
+                  type="button"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      if (note.is_saved) {
+                        await fetch(`/api/saved-for-later?resource_type=note&resource_id=${note.id}`, {
+                          method: 'DELETE',
+                          headers: { 'X-User-Id': String(user.id) }
+                        });
+                      } else {
+                        await fetch('/api/saved-for-later', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'X-User-Id': String(user.id)
+                          },
+                          body: JSON.stringify({ resource_type: 'note', resource_id: note.id }),
+                        });
+                      }
+                      queryClient.invalidateQueries({ queryKey: ['notes'] });
+                    } catch (err) {
+                      console.error(err);
+                    }
+                  }}
+                  className={clsx(
+                    "absolute top-4 right-16 p-1.5 rounded-lg border transition-all cursor-pointer shadow-sm hover:scale-105 z-10",
+                    note.is_saved 
+                      ? "bg-amber-500 text-white border-amber-500" 
+                      : "bg-white text-stone-400 hover:text-stone-600 border-stone-200"
+                  )}
+                  title={note.is_saved ? "Quitar de mis lecturas" : "Guardar para después"}
+                >
+                  <Bookmark className={clsx("w-3.5 h-3.5", note.is_saved && "fill-current")} />
+                </button>
+              )}
+
               {/* Icon */}
               <div className="bg-emerald-50 w-12 h-12 rounded-xl flex items-center justify-center mb-5 border border-emerald-100 group-hover:bg-emerald-600 transition-colors duration-300">
                 <FileText className="w-6 h-6 text-emerald-600 group-hover:text-white transition-colors" />
@@ -421,9 +702,37 @@ export function Notes() {
                     <User className="w-3.5 h-3.5 text-stone-500" />
                   </div>
                   <span className="font-medium">{note.author_name}</span>
+                  <UserRoleBadge role={note.author_role} className="scale-[0.8] origin-left" />
                 </div>
 
                 <div className="flex items-center gap-2">
+                  {user && (user.id === note.author_id || user.tier === 'super_admin' || user.tier === 'admin') && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditNote(note);
+                        }}
+                        className="p-1.5 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all cursor-pointer"
+                        title="Editar apunte"
+                      >
+                        <PencilLine className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteNote(note.id);
+                        }}
+                        className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
+                        title="Eliminar apunte"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
                   {/* Preview button — always available */}
                   {hasPreview && (
                     <button
@@ -560,36 +869,29 @@ export function Notes() {
                   <label htmlFor="note-year" className="block text-sm font-bold text-stone-700">
                     Año <span className="text-stone-400 font-normal">(opcional)</span>
                   </label>
-                  <select
+                  <input
                     id="note-year"
+                    type="text"
                     value={newNote.year}
                     onChange={(e) => setNewNote({ ...newNote, year: e.target.value })}
-                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all appearance-none"
-                  >
-                    <option value="">Sin especificar</option>
-                    {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map(y => (
-                      <option key={y} value={y}>{y}</option>
-                    ))}
-                  </select>
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                    placeholder="Ej. 2025 o 2° año"
+                  />
                 </div>
+
                 {/* Cátedra */}
                 <div className="space-y-1.5">
                   <label htmlFor="note-chair" className="block text-sm font-bold text-stone-700">
                     Cátedra <span className="text-stone-400 font-normal">(opcional)</span>
                   </label>
-                  <select
+                  <input
                     id="note-chair"
-                    value={newNote.chair_id}
-                    onChange={(e) => setNewNote({ ...newNote, chair_id: e.target.value })}
-                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all appearance-none"
-                  >
-                    <option value="">Sin especificar</option>
-                    {chairs.map((c: any) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}{c.professor ? ` (${c.professor})` : ''}{c.subject_name ? ` — ${c.subject_name}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    type="text"
+                    value={newNote.chair_name}
+                    onChange={(e) => setNewNote({ ...newNote, chair_name: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                    placeholder="Ej. Cátedra Alterini"
+                  />
                 </div>
 
                 {/* Profesor */}
@@ -673,6 +975,191 @@ export function Notes() {
         )}
       </AnimatePresence>
 
+      {/* ===== EDIT MODAL ===== */}
+      <AnimatePresence>
+        {isEditModalOpen && editingNote && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-50"
+              onClick={() => setIsEditModalOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg bg-white rounded-3xl shadow-2xl z-50 overflow-hidden"
+            >
+              <div className="flex items-center justify-between p-6 border-b border-stone-100 bg-stone-50/50">
+                <h2 className="text-xl font-bold flex items-center gap-2 text-stone-900" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+                  <div className="bg-emerald-100 p-1.5 rounded-lg">
+                    <PencilLine className="w-5 h-5 text-emerald-600" />
+                  </div>
+                  Editar Apunte
+                </h2>
+                <button
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleUpdateNote} className="p-6 space-y-5 overflow-y-auto max-h-[75vh]">
+                {/* Title */}
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-note-title" className="block text-sm font-bold text-stone-700">Título del Apunte</label>
+                  <input
+                    id="edit-note-title"
+                    type="text"
+                    required
+                    value={editNoteForm.title}
+                    onChange={(e) => setEditNoteForm({ ...editNoteForm, title: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                    placeholder="Ej. Resumen Primer Parcial"
+                  />
+                </div>
+
+                {/* Subject */}
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-note-subject" className="block text-sm font-bold text-stone-700">Materia</label>
+                  <select
+                    id="edit-note-subject"
+                    required
+                    value={editNoteForm.subject_id}
+                    onChange={(e) => setEditNoteForm({ ...editNoteForm, subject_id: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all appearance-none"
+                  >
+                    <option value="" disabled>Seleccioná una materia...</option>
+                    {subjects.map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Universidad */}
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-note-university" className="block text-sm font-bold text-stone-700">
+                    Universidad <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <select
+                    id="edit-note-university"
+                    value={editNoteForm.university_id}
+                    onChange={(e) => setEditNoteForm({ ...editNoteForm, university_id: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all appearance-none"
+                  >
+                    <option value="">Sin especificar</option>
+                    {universities.map((u: any) => (
+                      <option key={u.id} value={u.id}>{u.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Año */}
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-note-year" className="block text-sm font-bold text-stone-700">
+                    Año <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <input
+                    id="edit-note-year"
+                    type="text"
+                    value={editNoteForm.year}
+                    onChange={(e) => setEditNoteForm({ ...editNoteForm, year: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                    placeholder="Ej. 2025 o 2° año"
+                  />
+                </div>
+
+                {/* Cátedra */}
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-note-chair" className="block text-sm font-bold text-stone-700">
+                    Cátedra <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <input
+                    id="edit-note-chair"
+                    type="text"
+                    value={editNoteForm.chair_name}
+                    onChange={(e) => setEditNoteForm({ ...editNoteForm, chair_name: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                    placeholder="Ej. Cátedra Alterini"
+                  />
+                </div>
+
+                {/* Profesor */}
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-note-profesor" className="block text-sm font-bold text-stone-700">
+                    Profesor <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <input
+                    id="edit-note-profesor"
+                    type="text"
+                    value={editNoteForm.profesor}
+                    onChange={(e) => setEditNoteForm({ ...editNoteForm, profesor: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                    placeholder="Ej. Dr. Pérez"
+                  />
+                </div>
+
+                {/* Google Drive Link */}
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-note-url" className="block text-sm font-bold text-stone-700">
+                    Link de Google Drive
+                    <span className="text-red-500 ml-0.5">*</span>
+                  </label>
+                  <div className="relative">
+                    <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+                    <input
+                      id="edit-note-url"
+                      type="url"
+                      required
+                      value={editNoteForm.file_url}
+                      onChange={(e) => setEditNoteForm({ ...editNoteForm, file_url: e.target.value })}
+                      className="w-full pl-10 pr-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                      placeholder="https://docs.google.com/document/d/..."
+                    />
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-note-desc" className="block text-sm font-bold text-stone-700">
+                    Descripción breve <span className="text-stone-400 font-normal">(opcional)</span>
+                  </label>
+                  <textarea
+                    id="edit-note-desc"
+                    rows={2}
+                    value={editNoteForm.description}
+                    onChange={(e) => setEditNoteForm({ ...editNoteForm, description: e.target.value })}
+                    className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all resize-none"
+                    placeholder="Ej. Resumen de los primeros 5 temas con cuadros sinópticos..."
+                  ></textarea>
+                </div>
+
+                {/* Actions */}
+                <div className="pt-4 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditModalOpen(false)}
+                    className="flex-1 px-4 py-3 text-stone-600 font-bold hover:bg-stone-100 rounded-xl transition-colors text-center cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingEdit}
+                    className="flex-1 px-4 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 cursor-pointer"
+                  >
+                    {isSavingEdit ? 'Guardando...' : 'Guardar Cambios'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* ===== PREVIEW MODAL (Google Drive Embed) ===== */}
       <AnimatePresence>
         {previewNote && (
@@ -696,7 +1183,10 @@ export function Notes() {
                   <h2 className="text-lg font-bold text-stone-900 truncate" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
                     {previewNote.title}
                   </h2>
-                  <p className="text-xs text-stone-500 mt-0.5">{previewNote.subject_name} · {previewNote.author_name}</p>
+                  <p className="text-xs text-stone-500 mt-0.5 flex items-center gap-2">
+                    {previewNote.subject_name} · {previewNote.author_name}
+                    <UserRoleBadge role={previewNote.author_role} className="scale-[0.8] origin-left" />
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0 ml-4">
@@ -726,32 +1216,186 @@ export function Notes() {
                 </div>
               </div>
 
-              {/* Iframe */}
-              <div className="flex-1 relative bg-stone-100">
-                {previewLoading && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-white/80">
-                    <div className="w-10 h-10 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin mb-4"></div>
-                    <p className="text-stone-500 font-medium">Cargando documento...</p>
+              {/* Main Content Area: Split layout */}
+              <div className="flex-1 flex flex-row overflow-hidden">
+                {/* Left Side: Iframe */}
+                <div className="flex-1 relative bg-stone-100 h-full border-r border-stone-150">
+                  {previewLoading && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-white/80">
+                      <div className="w-10 h-10 border-4 border-emerald-250 border-t-emerald-600 rounded-full animate-spin mb-4"></div>
+                      <p className="text-stone-500 font-medium">Cargando documento...</p>
+                    </div>
+                  )}
+                  {previewNote.file_url && toPreviewUrl(previewNote.file_url) ? (
+                    <iframe
+                      src={toPreviewUrl(previewNote.file_url)!}
+                      className="w-full h-full border-0"
+                      onLoad={() => setPreviewLoading(false)}
+                      allow="autoplay"
+                      title={`Preview: ${previewNote.title}`}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-stone-500">
+                      <FileText className="w-16 h-16 text-stone-300 mb-4" />
+                      <p className="text-lg font-medium mb-2">No se puede previsualizar</p>
+                      <p className="text-sm">El link no es de Google Drive. Podés abrirlo en una pestaña nueva:</p>
+                      <a href={previewNote.file_url} target="_blank" rel="noopener noreferrer" className="mt-3 text-emerald-600 underline flex items-center gap-1 font-bold">
+                        <ExternalLink className="w-4 h-4" /> Abrir enlace
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {/* Right Side: Details, Ratings & Comments */}
+                <div className="w-80 flex flex-col h-full bg-stone-50 shrink-0">
+                  {/* Actions & Rating */}
+                  <div className="p-4 bg-white border-b border-stone-200 space-y-4 shrink-0">
+                    {/* Like / Dislike */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">Valoración</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          disabled={!user}
+                          onClick={() => handleVote(1)}
+                          className={clsx(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all",
+                            !user ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                            voteState.vote === 1 
+                              ? "bg-emerald-500 text-white shadow-sm font-bold" 
+                              : "bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold"
+                          )}
+                        >
+                          <ThumbsUp className="w-4 h-4" /> {voteState.likes}
+                        </button>
+
+                        <button
+                          disabled={!user}
+                          onClick={() => handleVote(-1)}
+                          className={clsx(
+                            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all",
+                            !user ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                            voteState.vote === -1 
+                              ? "bg-rose-500 text-white shadow-sm font-bold" 
+                              : "bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold"
+                          )}
+                        >
+                          <ThumbsDown className="w-4 h-4" /> {voteState.dislikes}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Bookmark / Guardar para después */}
+                    <button
+                      disabled={!user}
+                      onClick={handleToggleSave}
+                      className={clsx(
+                        "w-full flex items-center justify-center gap-2 py-2 px-4 rounded-xl text-sm font-bold border transition-all",
+                        !user ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                        isSaved 
+                          ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-500 shadow-sm" 
+                          : "bg-white hover:bg-stone-50 text-stone-700 border-stone-300"
+                      )}
+                    >
+                      <Bookmark className={clsx("w-4 h-4", isSaved && "fill-current")} />
+                      {isSaved ? "Guardado en mis lecturas" : "Guardar para después"}
+                    </button>
                   </div>
-                )}
-                {previewNote.file_url && toPreviewUrl(previewNote.file_url) ? (
-                  <iframe
-                    src={toPreviewUrl(previewNote.file_url)!}
-                    className="w-full h-full border-0"
-                    onLoad={() => setPreviewLoading(false)}
-                    allow="autoplay"
-                    title={`Preview: ${previewNote.title}`}
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-stone-500">
-                    <FileText className="w-16 h-16 text-stone-300 mb-4" />
-                    <p className="text-lg font-medium mb-2">No se puede previsualizar</p>
-                    <p className="text-sm">El link no es de Google Drive. Podés abrirlo en una pestaña nueva:</p>
-                    <a href={previewNote.file_url} target="_blank" rel="noopener noreferrer" className="mt-3 text-emerald-600 underline flex items-center gap-1 font-bold">
-                      <ExternalLink className="w-4 h-4" /> Abrir enlace
-                    </a>
+
+                  {/* Comments list */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    <h3 className="text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Comentarios ({comments.length})</h3>
+                    {comments.map((c: any) => (
+                      <div key={c.id} className="bg-white p-3 rounded-xl border border-stone-200 shadow-sm space-y-1.5">
+                        <div className="flex items-center justify-between text-xs text-stone-500">
+                          <span className="font-bold text-stone-700">{c.author_name}</span>
+                          <div className="flex items-center gap-1.5">
+                            <UserRoleBadge role={c.author_role} className="scale-[0.7] origin-right" />
+                            {user && (user.id === c.user_id || user.tier === 'super_admin' || user.tier === 'admin') && editingCommentId !== c.id && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => {
+                                    setEditingCommentId(c.id);
+                                    setEditCommentContent(c.content);
+                                  }}
+                                  className="text-stone-400 hover:text-emerald-600 transition-colors p-0.5 cursor-pointer"
+                                  title="Editar"
+                                >
+                                  <PencilLine className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteComment(c.id)}
+                                  className="text-stone-400 hover:text-rose-600 transition-colors p-0.5 cursor-pointer"
+                                  title="Eliminar"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {editingCommentId === c.id ? (
+                          <div className="space-y-2">
+                            <textarea
+                              value={editCommentContent}
+                              onChange={(e) => setEditCommentContent(e.target.value)}
+                              className="w-full p-2 bg-stone-50 border border-stone-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white resize-none"
+                              rows={2}
+                            />
+                            <div className="flex gap-1.5 justify-end">
+                              <button
+                                onClick={() => handleUpdateComment(c.id)}
+                                disabled={!editCommentContent.trim() || isSavingComment}
+                                className="bg-emerald-600 text-white px-2 py-1 rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                {isSavingComment ? '...' : 'Guardar'}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingCommentId(null);
+                                  setEditCommentContent('');
+                                }}
+                                className="bg-stone-100 text-stone-600 px-2 py-1 rounded-lg text-xs font-bold hover:bg-stone-200 transition-colors cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-stone-600 leading-relaxed font-sans">{c.content}</p>
+                        )}
+                      </div>
+                    ))}
+                    {comments.length === 0 && (
+                      <div className="text-center py-8 text-stone-400 text-xs">
+                        No hay comentarios todavía. ¡Sé el primero en comentar!
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  {/* Comment Input */}
+                  <div className="p-4 bg-white border-t border-stone-200 shrink-0">
+                    {user ? (
+                      <form onSubmit={handleSendComment} className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Escribir un comentario..."
+                          value={newComment}
+                          onChange={(e) => setNewComment(e.target.value)}
+                          className="flex-1 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
+                        />
+                        <button
+                          type="submit"
+                          disabled={submittingComment || !newComment.trim()}
+                          className="bg-emerald-600 text-white p-2 rounded-xl hover:bg-emerald-700 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          {submittingComment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                        </button>
+                      </form>
+                    ) : (
+                      <p className="text-xs text-stone-400 text-center">Debes iniciar sesión para votar o comentar.</p>
+                    )}
+                  </div>
+                </div>
               </div>
             </motion.div>
           </>

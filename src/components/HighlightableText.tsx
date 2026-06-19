@@ -139,10 +139,20 @@ export function HighlightableText({
             const newResult: React.ReactNode[] = [];
             result.forEach((part, index) => {
                 if (typeof part === 'string') {
-                    const parts = part.split(ann.selected_text);
+                    const escaped = ann.selected_text.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                    let regex = new RegExp(`(${escaped})`, 'gi');
+                    if (ann.id === -999) {
+                        const match = ann.selected_text.match(/Art(?:\.|ículo)?\s*(\d+)/i);
+                        if (match) {
+                            const artNum = match[1];
+                            regex = new RegExp(`(Art(?:\\.|ículo)?\\s*${artNum}\\b)`, 'gi');
+                        }
+                    }
+                    const parts = part.split(regex);
                     parts.forEach((p, i) => {
-                        newResult.push(p);
-                        if (i < parts.length - 1) {
+                        if (i % 2 === 0) {
+                            newResult.push(p);
+                        } else {
                             const isHighlighted = ann.id === activeAnnotationId || ann.id === hoveredAnnotationId;
                             newResult.push(
                                 <span
@@ -161,7 +171,7 @@ export function HighlightableText({
                                             : "bg-amber-100 text-stone-900 hover:bg-amber-200"
                                     )}
                                 >
-                                    {ann.selected_text}
+                                    {p}
                                 </span>
                             );
                         }

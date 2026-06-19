@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { GraduationCap, BookOpen, MessageSquare, Upload, Search, MapPin, ExternalLink, Edit2, X, School } from 'lucide-react';
+import { GraduationCap, BookOpen, MessageSquare, Upload, Search, MapPin, ExternalLink, Edit2, X, School, Plus, Trash2 } from 'lucide-react';
 import { Link } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
@@ -16,6 +16,15 @@ export function Universities() {
   const [editingUni, setEditingUni] = useState<any>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Create university states
+  const [showNewModal, setShowNewModal] = useState(false);
+  const [newUniName, setNewUniName] = useState('');
+  const [newUniCity, setNewUniCity] = useState('');
+  const [newUniProvince, setNewUniProvince] = useState('');
+  const [newUniType, setNewUniType] = useState('Pública');
+  const [newUniProgramUrl, setNewUniProgramUrl] = useState('');
+  const [newUniDescription, setNewUniDescription] = useState('');
 
   useEffect(() => {
     fetch('/api/universities')
@@ -55,6 +64,70 @@ export function Universities() {
     }
   };
 
+  const handleCreateUni = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUniName.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const resp = await fetch('/api/universities', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user?.id)
+        },
+        body: JSON.stringify({
+          name: newUniName.trim(),
+          description: newUniDescription.trim(),
+          city: newUniCity.trim(),
+          province: newUniProvince.trim(),
+          type: newUniType,
+          program_url: newUniProgramUrl.trim()
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setUniversities(prev => [...prev, data]);
+        setShowNewModal(false);
+        // Reset form
+        setNewUniName('');
+        setNewUniCity('');
+        setNewUniProvince('');
+        setNewUniType('Pública');
+        setNewUniProgramUrl('');
+        setNewUniDescription('');
+      } else {
+        const errData = await resp.json();
+        alert(errData.error || 'Error al crear la universidad');
+      }
+    } catch (err) {
+      console.error('Error creating university:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteUni = async (e: React.MouseEvent, id: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm('¿Estás seguro de que querés eliminar esta universidad? Se perderán las relaciones asociadas.')) return;
+    try {
+      const resp = await fetch(`/api/universities/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'X-User-Id': String(user?.id)
+        }
+      });
+      if (resp.ok) {
+        setUniversities(prev => prev.filter(u => u.id !== id));
+      } else {
+        const errData = await resp.json();
+        alert(errData.error || 'Error al eliminar la universidad');
+      }
+    } catch (err) {
+      console.error('Error deleting university:', err);
+    }
+  };
+
   const filteredUnis = universities.filter(u => 
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     u.city?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -91,6 +164,15 @@ export function Universities() {
             className="w-full pl-12 pr-4 py-4 bg-white border border-stone-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all shadow-sm text-lg"
           />
         </div>
+        {user?.tier === 'super_admin' && (
+          <button
+            onClick={() => setShowNewModal(true)}
+            className="flex items-center gap-2 bg-sky-650 bg-sky-650 bg-sky-600 text-white px-5 py-2.5 rounded-2xl font-semibold hover:bg-sky-700 transition-all shrink-0 cursor-pointer"
+          >
+            <Plus className="w-5 h-5" />
+            Cargar universidad
+          </button>
+        )}
         <div className="flex items-center gap-4 bg-stone-100 px-6 py-4 rounded-2xl shrink-0">
           <div className="text-center px-4 border-r border-stone-200">
             <div className="text-2xl font-bold text-stone-800">{universities.filter(u => u.type === 'Pública').length}</div>
@@ -111,14 +193,24 @@ export function Universities() {
             to={`/universities/${uni.id}`}
             className="p-6 bg-white border border-stone-200 rounded-2xl shadow-sm hover:border-sky-300 hover:shadow-lg transition-all flex flex-col h-full relative group cursor-pointer"
           >
-            {/* Admin Edit Button */}
+            {/* Admin Edit & Delete Buttons */}
             {user?.tier === 'super_admin' && (
-              <button 
-                onClick={(e) => handleEditClick(e, uni)}
-                className="absolute top-4 right-4 p-2 bg-white rounded-full shadow-sm border border-stone-100 text-stone-400 hover:text-sky-600 hover:border-sky-200 transition-all opacity-0 group-hover:opacity-100 z-10"
-              >
-                <Edit2 className="w-4 h-4" />
-              </button>
+              <div className="absolute top-4 right-4 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <button 
+                  onClick={(e) => handleEditClick(e, uni)}
+                  className="p-2 bg-white rounded-full shadow-sm border border-stone-100 text-stone-400 hover:text-sky-600 hover:border-sky-200 transition-all cursor-pointer"
+                  title="Editar"
+                >
+                  <Edit2 className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={(e) => handleDeleteUni(e, uni.id)}
+                  className="p-2 bg-white rounded-full shadow-sm border border-stone-100 text-stone-400 hover:text-rose-600 hover:border-rose-200 transition-all cursor-pointer"
+                  title="Eliminar"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             )}
 
             <div className="flex items-start gap-4 mb-6">
@@ -250,6 +342,112 @@ export function Universities() {
                     className="flex-1 py-3 bg-sky-600 text-white font-bold rounded-2xl hover:bg-sky-700 disabled:opacity-50"
                   >
                     {isSubmitting ? 'Guardando...' : 'Guardar Cambios'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Create University Modal */}
+      <AnimatePresence>
+        {showNewModal && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-50"
+              onClick={() => setShowNewModal(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-xl bg-white rounded-3xl shadow-2xl z-50 overflow-hidden"
+            >
+              <div className="p-6 border-b border-stone-100 flex justify-between items-center bg-stone-50/50">
+                <h3 className="text-xl font-bold text-stone-900">Nueva Universidad</h3>
+                <button onClick={() => setShowNewModal(false)} className="text-stone-400 hover:text-stone-600">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <form onSubmit={handleCreateUni} className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-xs font-bold text-stone-500 uppercase">Nombre</label>
+                    <input 
+                      type="text" 
+                      required
+                      value={newUniName} 
+                      onChange={e => setNewUniName(e.target.value)}
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-sky-500"
+                      placeholder="Ej. Universidad de Buenos Aires"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-stone-500 uppercase">Ciudad</label>
+                    <input 
+                      type="text" 
+                      value={newUniCity} 
+                      onChange={e => setNewUniCity(e.target.value)}
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-sky-500"
+                      placeholder="Ej. CABA"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-stone-500 uppercase">Provincia</label>
+                    <input 
+                      type="text" 
+                      value={newUniProvince} 
+                      onChange={e => setNewUniProvince(e.target.value)}
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-sky-500"
+                      placeholder="Ej. Buenos Aires"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-stone-500 uppercase">Tipo</label>
+                    <select 
+                      value={newUniType} 
+                      onChange={e => setNewUniType(e.target.value)}
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-sky-500"
+                    >
+                      <option value="Pública">Pública</option>
+                      <option value="Privada">Privada</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-stone-500 uppercase">Link Plan Estudios</label>
+                    <input 
+                      type="text" 
+                      value={newUniProgramUrl} 
+                      onChange={e => setNewUniProgramUrl(e.target.value)}
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-sky-500"
+                      placeholder="https://..."
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-xs font-bold text-stone-500 uppercase">Descripción</label>
+                    <textarea 
+                      value={newUniDescription} 
+                      onChange={e => setNewUniDescription(e.target.value)}
+                      rows={3}
+                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-sky-500"
+                      placeholder="Breve descripción de la facultad..."
+                    />
+                  </div>
+                </div>
+                <div className="pt-4 flex gap-3">
+                  <button type="button" onClick={() => setShowNewModal(false)} className="flex-1 py-3 font-bold text-stone-500 hover:bg-stone-50 rounded-2xl cursor-pointer">
+                    Cancelar
+                  </button>
+                  <button 
+                    type="submit" 
+                    disabled={isSubmitting || !newUniName.trim()}
+                    className="flex-1 py-3 bg-sky-600 text-white font-bold rounded-2xl hover:bg-sky-700 disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSubmitting ? 'Guardando...' : 'Cargar Universidad'}
                   </button>
                 </div>
               </form>

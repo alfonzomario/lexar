@@ -32,6 +32,8 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
     const [texto, setTexto] = useState('');
     const [fechaPublicacion, setFechaPublicacion] = useState('');
     const [fuenteUrl, setFuenteUrl] = useState('');
+    const [infolegLink, setInfolegLink] = useState('');
+    const [keywords, setKeywords] = useState('');
 
     const resetForm = () => {
         setStep('input');
@@ -43,6 +45,8 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
         setTexto('');
         setFechaPublicacion('');
         setFuenteUrl('');
+        setInfolegLink('');
+        setKeywords('');
         setIsSaving(false);
         setAiPrefilled(false);
         setInputText('');
@@ -57,6 +61,7 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
         if (data.titulo) setTitulo(String(data.titulo));
         if (data.organismo) setOrganismo(String(data.organismo));
         if (data.fecha_publicacion) setFechaPublicacion(String(data.fecha_publicacion));
+        if (data.keywords) setKeywords(String(data.keywords));
 
         const extractedText = data._extractedText ? String(data._extractedText) : '';
         const resumido = data.texto_resumido ? String(data.texto_resumido) : '';
@@ -116,7 +121,9 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
                     texto,
                     organismo,
                     fecha_publicacion: fechaPublicacion,
-                    fuente_url: fuenteUrl
+                    fuente_url: fuenteUrl,
+                    infoleg_link: infolegLink,
+                    keywords: keywords
                 })
             });
 
@@ -473,7 +480,29 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
                                                 type="url"
                                                 value={fuenteUrl}
                                                 onChange={(e) => setFuenteUrl(e.target.value)}
-                                                placeholder="https://servicios.infoleg.gob.ar/..."
+                                                placeholder="https://boletinoficial.gob.ar/..."
+                                                className="w-full border border-stone-200 rounded-xl px-4 py-3 bg-stone-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-stone-700 mb-2">Link de InfoLEG (Opcional)</label>
+                                            <input
+                                                type="url"
+                                                value={infolegLink}
+                                                onChange={(e) => setInfolegLink(e.target.value)}
+                                                placeholder="https://servicios.infoleg.gob.ar/infolegInternet/..."
+                                                className="w-full border border-stone-200 rounded-xl px-4 py-3 bg-stone-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-bold text-stone-700 mb-2">Palabras Clave (Separadas por comas)</label>
+                                            <input
+                                                type="text"
+                                                value={keywords}
+                                                onChange={(e) => setKeywords(e.target.value)}
+                                                placeholder="ej. contrato, alquiler, locación"
                                                 className="w-full border border-stone-200 rounded-xl px-4 py-3 bg-stone-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                                             />
                                         </div>

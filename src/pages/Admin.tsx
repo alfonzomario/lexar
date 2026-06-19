@@ -17,6 +17,48 @@ export function Admin() {
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', tier: 'free', profile_role: 'Estudiante' });
 
+  // Edit user states
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', email: '', tier: 'free', profile_role: 'Estudiante' });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const handleEditClick = (u: any) => {
+    setEditingUser(u);
+    setEditForm({
+      name: u.name,
+      email: u.email,
+      tier: u.tier,
+      profile_role: u.profile_role || 'Estudiante'
+    });
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !editingUser) return;
+    setIsSavingEdit(true);
+    try {
+      const res = await fetch(`/api/admin/users/${editingUser.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user.id)
+        },
+        body: JSON.stringify(editForm)
+      });
+      if (res.ok) {
+        setEditingUser(null);
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Error al actualizar usuario');
+      }
+    } catch (error) {
+      alert('Error de conexión');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   const fetchUsers = async () => {
     try {
       const res = await fetch('/api/admin/users/all', { headers: user ? { 'X-User-Id': String(user.id) } : {} });
@@ -434,7 +476,7 @@ export function Admin() {
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-stone-700 mb-1">Contraseña Inicial</label>
-                      <input required type="text" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} className="w-full border border-stone-200 rounded-xl px-4 py-2" />
+                      <input required type="password" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} className="w-full border border-stone-200 rounded-xl px-4 py-2" />
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-stone-700 mb-1">Plan / Permisos</label>
@@ -467,6 +509,7 @@ export function Admin() {
                         <th className="py-4 px-4 font-semibold">Email</th>
                         <th className="py-4 px-4 font-semibold">Plan</th>
                         <th className="py-4 px-4 font-semibold">Rol</th>
+                        <th className="py-4 px-4 font-semibold text-right">Acciones</th>
                       </tr>
                     </thead>
                     <tbody className="text-sm">
@@ -485,12 +528,106 @@ export function Admin() {
                             </span>
                           </td>
                           <td className="py-4 px-4 text-stone-500">{u.profile_role || '-'}</td>
+                          <td className="py-4 px-4 text-right">
+                            <button
+                              onClick={() => handleEditClick(u)}
+                              className="text-indigo-600 hover:text-indigo-850 text-xs font-bold bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                            >
+                              Editar
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               )}
+
+            {/* Edit User Modal */}
+            {editingUser && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 overflow-y-auto">
+                <div className="bg-white rounded-3xl max-w-md w-full p-6 md:p-8 shadow-2xl border border-stone-200">
+                  <div className="flex items-center justify-between pb-4 border-b border-stone-100 mb-6">
+                    <h3 className="text-xl font-bold text-stone-900 font-sans">
+                      Editar Usuario
+                    </h3>
+                    <button
+                      onClick={() => setEditingUser(null)}
+                      className="p-2 text-stone-400 hover:text-stone-650 rounded-full hover:bg-stone-50 transition-colors cursor-pointer"
+                    >
+                      <XCircle className="w-5 h-5" />
+                    </button>
+                  </div>
+                  
+                  <form onSubmit={handleUpdateUser} className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Nombre Completo</label>
+                      <input 
+                        required 
+                        type="text" 
+                        value={editForm.name} 
+                        onChange={e => setEditForm({...editForm, name: e.target.value})} 
+                        className="w-full border border-stone-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Email</label>
+                      <input 
+                        required 
+                        type="email" 
+                        value={editForm.email} 
+                        onChange={e => setEditForm({...editForm, email: e.target.value})} 
+                        className="w-full border border-stone-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Plan / Permisos</label>
+                      <select 
+                        value={editForm.tier} 
+                        onChange={e => setEditForm({...editForm, tier: e.target.value})} 
+                        className="w-full border border-stone-200 rounded-xl px-4 py-2 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="free">Free (Básico)</option>
+                        <option value="basic">Basic (Intermedio)</option>
+                        <option value="pro">Pro (Avanzado)</option>
+                        <option value="admin">Admin</option>
+                        <option value="super_admin">Super Admin</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-stone-700 mb-1">Rol de Perfil</label>
+                      <select 
+                        value={editForm.profile_role} 
+                        onChange={e => setEditForm({...editForm, profile_role: e.target.value})} 
+                        className="w-full border border-stone-200 rounded-xl px-4 py-2 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="Estudiante">Estudiante</option>
+                        <option value="Abogado">Abogado</option>
+                        <option value="Profesor">Profesor</option>
+                        <option value="Administrador">Administrador</option>
+                      </select>
+                    </div>
+                    
+                    <div className="pt-4 flex justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setEditingUser(null)}
+                        className="px-4 py-2 border border-stone-200 rounded-xl text-stone-600 hover:bg-stone-50 font-bold transition-colors text-sm cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingEdit}
+                        className="px-5 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors text-sm cursor-pointer"
+                      >
+                        {isSavingEdit ? 'Guardando...' : 'Guardar Cambios'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
             </div>
           )}
 

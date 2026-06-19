@@ -4,7 +4,7 @@ import {
   ArrowLeft, Scale, FileText, Share2, Download,
   MessageSquare, BookOpen, Network, Sparkles,
   ChevronRight, ExternalLink, AlertTriangle,
-  Copy, Check, Loader2
+  Copy, Check, Loader2, PencilLine, Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
@@ -30,9 +30,13 @@ export function NormaDetail() {
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteSaved, setNoteSaved] = useState(false);
   const [savedNotes, setSavedNotes] = useState<any[]>([]);
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editCommentContent, setEditCommentContent] = useState('');
+  const [isSavingComment, setIsSavingComment] = useState(false);
 
   // Relations
   const [relations, setRelations] = useState<{ modifica: any[], modificada_por: any[] }>({ modifica: [], modificada_por: [] });
+  const [briefRelations, setBriefRelations] = useState<any[]>([]);
   const [relationsLoading, setRelationsLoading] = useState(false);
 
   useEffect(() => {
@@ -56,12 +60,15 @@ export function NormaDetail() {
 
   // Load relations when tab changes
   useEffect(() => {
-    if (activeTab === 'relaciones' && id && relations.modifica.length === 0 && relations.modificada_por.length === 0) {
+    if (activeTab === 'relaciones' && id && relations.modifica.length === 0 && relations.modificada_por.length === 0 && briefRelations.length === 0) {
       setRelationsLoading(true);
-      fetch(`/api/normas/${id}/relaciones`)
-        .then(res => res.json())
-        .then(data => {
-          setRelations(data);
+      Promise.all([
+        fetch(`/api/normas/${id}/relaciones`).then(res => res.json()),
+        fetch(`/api/normas/${id}/brief-relations`).then(res => res.json())
+      ])
+        .then(([relData, briefData]) => {
+          setRelations(relData);
+          setBriefRelations(briefData);
           setRelationsLoading(false);
         })
         .catch(() => setRelationsLoading(false));
@@ -123,6 +130,30 @@ export function NormaDetail() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleShare = async () => {
+    if (!norma) return;
+    const shareData = {
+      title: `${norma.tipo} ${norma.numero}/${norma.anio} - LexARG`,
+      text: norma.titulo,
+      url: window.location.href,
+    };
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+      try {
+        await navigator.share(shareData);
+      } catch (err) {
+        console.log('Share aborted or failed:', err);
+      }
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
   const handleSaveNote = async () => {
     if (!user || !id || !noteText.trim()) return;
     setNoteSaving(true);
@@ -149,6 +180,59 @@ export function NormaDetail() {
     }
   };
 
+  const handleUpdateComment = async (commentId: number) => {
+    if (!editCommentContent.trim()) return;
+    setIsSavingComment(true);
+    try {
+      const res = await fetch(`/api/comments/${commentId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': String(user?.id)
+        },
+        body: JSON.stringify({ content: editCommentContent.trim() }),
+      });
+      if (res.ok) {
+        setEditingCommentId(null);
+        setEditCommentContent('');
+        if (id) {
+          const updatedRes = await fetch(`/api/comments/norma/${id}`);
+          if (updatedRes.ok) {
+            const updatedData = await updatedRes.json();
+            setSavedNotes(updatedData);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error updating comment:', err);
+    } finally {
+      setIsSavingComment(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: number) => {
+    if (!window.confirm('¿Estás seguro de que querés eliminar este comentario?')) return;
+    try {
+      const res = await fetch(`/api/comments/${commentId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-User-Id': String(user?.id)
+        }
+      });
+      if (res.ok) {
+        if (id) {
+          const updatedRes = await fetch(`/api/comments/norma/${id}`);
+          if (updatedRes.ok) {
+            const updatedData = await updatedRes.json();
+            setSavedNotes(updatedData);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error deleting comment:', err);
+    }
+  };
+
   if (loading) return (
     <div className="flex items-center justify-center min-h-[60vh]">
       <BalanzaLoader size="lg" text="Cargando Norma..." />
@@ -156,7 +240,7 @@ export function NormaDetail() {
   );
   if (!norma) return <div className="text-center py-20">Norma no encontrada</div>;
 
-  const hasRelations = relations.modifica.length > 0 || relations.modificada_por.length > 0;
+  const hasRelations = relations.modifica.length > 0 || relations.modificada_por.length > 0 || briefRelations.length > 0;
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -170,10 +254,10 @@ export function NormaDetail() {
           <button onClick={handleCopy} className="p-2 text-stone-500 hover:text-indigo-600 transition-colors" title="Copiar cita">
             {copied ? <Check className="w-5 h-5 text-emerald-500" /> : <Copy className="w-5 h-5" />}
           </button>
-          <button className="p-2 text-stone-500 hover:text-indigo-600 transition-colors" title="Compartir">
-            <Share2 className="w-5 h-5" />
+          <button onClick={handleShare} className="p-2 text-stone-500 hover:text-indigo-600 transition-colors" title="Compartir">
+            {copied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
           </button>
-          <button className="p-2 text-stone-500 hover:text-indigo-600 transition-colors" title="Descargar PDF">
+          <button onClick={handlePrint} className="p-2 text-stone-500 hover:text-indigo-600 transition-colors" title="Descargar PDF">
             <Download className="w-5 h-5" />
           </button>
         </div>
@@ -206,16 +290,27 @@ export function NormaDetail() {
                 </div>
                 <div className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4" />
-                  Publicado: {norma.fecha_publicacion}
+                  Fecha de promulgación: {norma.fecha_publicacion}
                 </div>
-                <a
-                  href={norma.fuente_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-indigo-600 hover:underline font-medium"
-                >
-                  Ver en InfoLEG <ExternalLink className="w-3 h-3" />
-                </a>
+                {norma.infoleg_link ? (
+                  <a
+                    href={norma.infoleg_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-indigo-600 hover:underline font-medium"
+                  >
+                    Ver en InfoLEG <ExternalLink className="w-3 h-3" />
+                  </a>
+                ) : norma.fuente_url ? (
+                  <a
+                    href={norma.fuente_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-indigo-600 hover:underline font-medium"
+                  >
+                    Ver en InfoLEG <ExternalLink className="w-3 h-3" />
+                  </a>
+                ) : null}
               </div>
             </div>
 
@@ -305,7 +400,7 @@ export function NormaDetail() {
                         {relations.modifica.length > 0 && (
                           <div>
                             <h3 className="text-sm font-bold text-stone-900 uppercase tracking-wider mb-3 flex items-center gap-2">
-                              <span className="w-2 h-2 bg-indigo-500 rounded-full" />
+                              <span className="w-2.5 h-2.5 bg-indigo-500 rounded-full" />
                               Normas que modifica
                             </h3>
                             <div className="grid grid-cols-1 gap-3">
@@ -329,7 +424,7 @@ export function NormaDetail() {
                         {relations.modificada_por.length > 0 && (
                           <div>
                             <h3 className="text-sm font-bold text-stone-900 uppercase tracking-wider mb-3 flex items-center gap-2">
-                              <span className="w-2 h-2 bg-amber-500 rounded-full" />
+                              <span className="w-2.5 h-2.5 bg-amber-500 rounded-full" />
                               Modificada / Reglamentada por
                             </h3>
                             <div className="grid grid-cols-1 gap-3">
@@ -343,6 +438,34 @@ export function NormaDetail() {
                                     <div className="text-[10px] font-bold text-amber-600 uppercase">{rel.tipo_relacion || 'Modificada por'}</div>
                                     <div className="font-bold text-stone-900">{rel.tipo} {rel.numero}/{rel.anio}</div>
                                     <div className="text-xs text-stone-500 mt-0.5">{rel.titulo}</div>
+                                  </div>
+                                  <ChevronRight className="w-4 h-4 text-stone-400 shrink-0" />
+                                </Link>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {briefRelations.length > 0 && (
+                          <div>
+                            <h3 className="text-sm font-bold text-stone-900 uppercase tracking-wider mb-3 flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full" />
+                              Citada en Jurisprudencia / Fallos
+                            </h3>
+                            <div className="grid grid-cols-1 gap-3">
+                              {briefRelations.map((rel: any, idx: number) => (
+                                <Link
+                                  key={idx}
+                                  to={`/briefs/${rel.brief_id}?highlight=${encodeURIComponent(rel.article_number)}`}
+                                  className="p-4 rounded-xl border border-stone-100 bg-stone-50 flex items-center justify-between text-left hover:border-emerald-250 hover:bg-emerald-50/30 transition-all"
+                                >
+                                  <div>
+                                    <div className="text-[10px] font-bold text-emerald-600 uppercase">
+                                      Citada en Fallo respecto del {rel.article_number}
+                                    </div>
+                                    <div className="font-bold text-stone-900">{rel.brief_title}</div>
+                                    <div className="text-xs text-stone-500 mt-1 italic">
+                                      "{rel.context}"
+                                    </div>
                                   </div>
                                   <ChevronRight className="w-4 h-4 text-stone-400 shrink-0" />
                                 </Link>
@@ -497,9 +620,63 @@ export function NormaDetail() {
               <div className="mt-4 space-y-3 max-h-[300px] overflow-y-auto">
                 <p className="text-xs font-bold text-stone-500 uppercase tracking-wider">Notas guardadas</p>
                 {savedNotes.map((note: any) => (
-                  <div key={note.id} className="p-3 bg-stone-50 rounded-lg border border-stone-100 text-sm text-stone-700 whitespace-pre-wrap">
-                    {note.content}
-                    <p className="text-[10px] text-stone-400 mt-2">{new Date(note.created_at).toLocaleDateString('es-AR')}</p>
+                  <div key={note.id} className="p-3 bg-stone-50 rounded-lg border border-stone-100 text-sm text-stone-700 whitespace-pre-wrap relative group">
+                    {editingCommentId === note.id ? (
+                      <div className="space-y-2">
+                        <textarea
+                          value={editCommentContent}
+                          onChange={(e) => setEditCommentContent(e.target.value)}
+                          className="w-full p-2 bg-white border border-stone-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
+                          rows={2}
+                        />
+                        <div className="flex gap-1.5 justify-end">
+                          <button
+                            onClick={() => handleUpdateComment(note.id)}
+                            disabled={!editCommentContent.trim() || isSavingComment}
+                            className="bg-indigo-600 text-white px-2 py-1 rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 cursor-pointer"
+                          >
+                            {isSavingComment ? '...' : 'Guardar'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingCommentId(null);
+                              setEditCommentContent('');
+                            }}
+                            className="bg-stone-100 text-stone-600 px-2 py-1 rounded-lg text-xs font-bold hover:bg-stone-200 transition-colors cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="flex-1">{note.content}</div>
+                          {user && (user.id === note.user_id || user.tier === 'super_admin' || user.tier === 'admin') && (
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => {
+                                  setEditingCommentId(note.id);
+                                  setEditCommentContent(note.content);
+                                }}
+                                className="text-stone-400 hover:text-indigo-600 transition-colors p-0.5 cursor-pointer"
+                                title="Editar"
+                              >
+                                <PencilLine className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteComment(note.id)}
+                                className="text-stone-400 hover:text-rose-600 transition-colors p-0.5 cursor-pointer"
+                                title="Eliminar"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-stone-400 mt-2">{new Date(note.created_at).toLocaleDateString('es-AR')}</p>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>

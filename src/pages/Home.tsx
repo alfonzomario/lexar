@@ -60,7 +60,11 @@ export function Home() {
   useEffect(() => {
     fetch('/api/news')
       .then((res) => res.json())
-      .then((data) => setNews(data.slice(0, 3)));
+      .then((data) => setNews(data.slice(0, 3)))
+      .catch((err) => {
+        console.error('Error fetching news:', err);
+        setNews([]);
+      });
   }, []);
 
   const containerVariants = {

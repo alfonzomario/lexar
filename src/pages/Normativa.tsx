@@ -11,6 +11,12 @@ export function Normativa() {
   const [loading, setLoading] = useState(true);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
+  // Advanced filters state
+  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [filterTipo, setFilterTipo] = useState('');
+  const [filterOrganismo, setFilterOrganismo] = useState('');
+  const [filterAnio, setFilterAnio] = useState('');
+
   useEffect(() => {
     fetchNormas();
   }, []);
@@ -29,6 +35,18 @@ export function Normativa() {
     e.preventDefault();
     fetchNormas(search);
   };
+
+  // Filter lists derived from current results
+  const uniqueTipos = [...new Set(normas.map(n => n.tipo))].filter(Boolean) as string[];
+  const uniqueOrganismos = [...new Set(normas.map(n => n.organismo))].filter(Boolean) as string[];
+  const uniqueAnios = [...new Set(normas.map(n => String(n.anio)))].filter(Boolean).sort((a, b) => b.localeCompare(a));
+
+  const filteredNormas = normas.filter(norma => {
+    if (filterTipo && norma.tipo !== filterTipo) return false;
+    if (filterOrganismo && norma.organismo !== filterOrganismo) return false;
+    if (filterAnio && String(norma.anio) !== filterAnio) return false;
+    return true;
+  });
 
   return (
     <motion.div
@@ -85,16 +103,84 @@ export function Normativa() {
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold text-stone-900 flex items-center gap-2">
             <FileText className="w-5 h-5 text-indigo-600" />
-            {loading ? 'Buscando...' : `${normas.length} resultados encontrados`}
+            {loading ? 'Buscando...' : `${filteredNormas.length} resultados encontrados`}
           </h2>
-          <button className="flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-indigo-600 transition-colors">
+          <button 
+            onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+            className={clsx(
+              "flex items-center gap-2 text-sm font-medium transition-colors",
+              isFiltersOpen ? "text-indigo-600" : "text-stone-600 hover:text-indigo-600"
+            )}
+          >
             <Filter className="w-4 h-4" />
             Filtros Avanzados
           </button>
         </div>
 
+        {isFiltersOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className="bg-stone-50 border border-stone-200 rounded-2xl p-5 grid grid-cols-1 sm:grid-cols-3 gap-4"
+          >
+            <div>
+              <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Tipo de Norma</label>
+              <select
+                value={filterTipo}
+                onChange={(e) => setFilterTipo(e.target.value)}
+                className="w-full bg-white border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Todos los tipos</option>
+                {uniqueTipos.map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Organismo Emisor</label>
+              <select
+                value={filterOrganismo}
+                onChange={(e) => setFilterOrganismo(e.target.value)}
+                className="w-full bg-white border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Todos los organismos</option>
+                {uniqueOrganismos.map(org => (
+                  <option key={org} value={org}>{org}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Año</label>
+              <select
+                value={filterAnio}
+                onChange={(e) => setFilterAnio(e.target.value)}
+                className="w-full bg-white border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Todos los años</option>
+                {uniqueAnios.map(yr => (
+                  <option key={yr} value={yr}>{yr}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Clear filters button if any is active */}
+            {(filterTipo || filterOrganismo || filterAnio) && (
+              <div className="sm:col-span-3 flex justify-end">
+                <button
+                  onClick={() => { setFilterTipo(''); setFilterOrganismo(''); setFilterAnio(''); }}
+                  className="text-xs font-bold text-rose-600 hover:text-rose-700 transition-colors"
+                >
+                  Limpiar Filtros
+                </button>
+              </div>
+            )}
+          </motion.div>
+        )}
+
         <div className="grid grid-cols-1 gap-4">
-          {normas.map((norma) => (
+          {filteredNormas.map((norma) => (
             <Link
               key={norma.id}
               to={`/normativa/${norma.id}`}
@@ -131,7 +217,7 @@ export function Normativa() {
             </Link>
           ))}
 
-          {!loading && normas.length === 0 && (
+          {!loading && filteredNormas.length === 0 && (
             <div className="text-center py-20 bg-white rounded-3xl border border-stone-200 border-dashed">
               <Scale className="w-16 h-16 text-stone-300 mx-auto mb-4" />
               <h3 className="text-lg font-bold text-stone-900">No encontramos esa norma</h3>

@@ -16,5 +16,6 @@ if (dbDir !== __dirname && !fs.existsSync(dbDir)) {
 }
 
 // We share the same underlying SQLite DB file instance
-const sqlite = new Database(dbPath);
+export const sqlite = new Database(dbPath);
 export const db = drizzle(sqlite, { schema: { ...schema, ...relations } });
+

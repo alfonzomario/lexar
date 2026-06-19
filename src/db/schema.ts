@@ -12,6 +12,11 @@ export const users = sqliteTable("users", {
 	docViewsUsed: integer("doc_views_used").default(0),
 	docViewsPeriod: text("doc_views_period"),
 	password: text(),
+	university: text(),
+	lawFirm: text("law_firm"),
+	courtSpecialty: text("court_specialty"),
+	dni: text(),
+	telefono: text(),
 });
 
 export const subjects = sqliteTable("subjects", {
@@ -133,6 +138,8 @@ export const jobs = sqliteTable("jobs", {
 	type: text().notNull(),
 	description: text(),
 	date: text().notNull(),
+	assistance: text().default("Presencial"),
+	authorId: integer("author_id").references(() => users.id),
 });
 
 export const universities = sqliteTable("universities", {
@@ -174,7 +181,9 @@ export const studentNotes = sqliteTable("student_notes", {
 	status: text().default("published"),
 	date: text().notNull(),
 	fileUrl: text("file_url"),
-	year: integer(),
+	year: text(),
+	chairName: text("chair_name"),
+	professor: text(),
 });
 
 export const messages = sqliteTable("messages", {
@@ -183,6 +192,7 @@ export const messages = sqliteTable("messages", {
 	receiverId: integer("receiver_id").references(() => users.id),
 	content: text().notNull(),
 	timestamp: text().notNull(),
+	isRead: integer("is_read").default(0),
 });
 
 export const chatRooms = sqliteTable("chat_rooms", {
@@ -233,6 +243,9 @@ export const legalMovies = sqliteTable("legal_movies", {
 	synopsis: text(),
 	legalThemes: text("legal_themes"),
 	link: text(),
+	posterUrl: text("poster_url"),
+	director: text(),
+	trailerLink: text("trailer_link"),
 });
 
 export const privateNotes = sqliteTable("private_notes", {
@@ -258,6 +271,7 @@ export const resourceVotes = sqliteTable("resource_votes", {
 	userId: integer("user_id").notNull().references(() => users.id),
 	resourceType: text("resource_type").notNull(),
 	resourceId: integer("resource_id").notNull(),
+	vote: integer().default(1),
 	createdAt: text("created_at").notNull(),
 },
 (table) => [
@@ -306,6 +320,8 @@ export const normas = sqliteTable("normas", {
 	fechaPublicacion: text("fecha_publicacion"),
 	estado: text().default("Vigente"),
 	fuenteUrl: text("fuente_url"),
+	keywords: text(),
+	infolegLink: text("infoleg_link"),
 });
 
 export const relacionesNormativas = sqliteTable("relaciones_normativas", {
@@ -320,6 +336,50 @@ export const jobApplications = sqliteTable("job_applications", {
 	jobId: integer("job_id").notNull().references(() => jobs.id),
 	userId: integer("user_id").notNull().references(() => users.id),
 	coverLetter: text("cover_letter").notNull(),
+	cvType: text("cv_type"),
+	cvLink: text("cv_link"),
+	cvFileName: text("cv_file_name"),
+	cvFileData: text("cv_file_data"),
 	createdAt: text("created_at").notNull(),
 });
+
+export const forumTopics = sqliteTable("forum_topics", {
+	id: integer().primaryKey({ autoIncrement: true }),
+	title: text().notNull(),
+	content: text(),
+	authorId: integer("author_id").notNull().references(() => users.id),
+	subjectId: integer("subject_id").references(() => subjects.id),
+	category: text().default("general"),
+	createdAt: text("created_at").notNull(),
+	updatedAt: text("updated_at").notNull(),
+	views: integer().default(0),
+	pinned: integer().default(0),
+});
+
+export const forumReplies = sqliteTable("forum_replies", {
+	id: integer().primaryKey({ autoIncrement: true }),
+	topicId: integer("topic_id").notNull().references(() => forumTopics.id),
+	authorId: integer("author_id").notNull().references(() => users.id),
+	content: text().notNull(),
+	createdAt: text("created_at").notNull(),
+});
+
+export const comments = sqliteTable("comments", {
+	id: integer().primaryKey({ autoIncrement: true }),
+	userId: integer("user_id").notNull().references(() => users.id),
+	resourceType: text("resource_type").notNull(),
+	resourceId: integer("resource_id").notNull(),
+	content: text().notNull(),
+	createdAt: text("created_at").notNull(),
+});
+
+export const savedLatinisms = sqliteTable("saved_latinisms", {
+	userId: integer("user_id").notNull().references(() => users.id),
+	latinismId: integer("latinism_id").notNull().references(() => latinisms.id),
+	createdAt: text("created_at").notNull(),
+},
+(table) => [
+	primaryKey({ columns: [table.userId, table.latinismId], name: "saved_latinisms_user_id_latinism_id_pk"})
+]);
+
 

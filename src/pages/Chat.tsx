@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Send, User, MessageCircle, Lock, Hash, LogOut, Search, Crown, Shield } from 'lucide-react';
+import { Send, User, MessageCircle, Lock, Hash, LogOut, Search, Crown, Shield, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
 import { clsx } from 'clsx';
 import { BalanzaLoader } from '../components/BalanzaLoader';
 import { useAuth } from '../contexts/AuthContext';
+import { UserRoleBadge } from '../components/UserRoleBadge';
 
 type ChatRoom = { id: number; slug: string; name: string; category: string };
 type RoomMessage = { id: number; room_id: number; user_id: number; user_name: string; content: string; timestamp: string };
@@ -36,28 +37,95 @@ export function Chat() {
   const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
   const [dmMessages, setDmMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
+
+  const [hasMoreDms, setHasMoreDms] = useState(true);
+  const [loadingMoreDms, setLoadingMoreDms] = useState(false);
+  const [hasMoreRoomMsgs, setHasMoreRoomMsgs] = useState(true);
+  const [loadingMoreRoomMsgs, setLoadingMoreRoomMsgs] = useState(false);
+  const shouldScrollToBottomRef = useRef(true);
   const [userSearch, setUserSearch] = useState('');
   const socketRef = useRef<Socket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [onlineUsers, setOnlineUsers] = useState<Set<number>>(new Set());
+  const [unreadCounts, setUnreadCounts] = useState<Record<number, number>>({});
 
   const currentUser = user;
   const isPro = currentUser && (currentUser.tier === 'pro' || currentUser.tier === 'admin' || currentUser.tier === 'super_admin');
 
+  const selectedUserRef = useRef<any>(null);
+  useEffect(() => {
+    selectedUserRef.current = selectedUser;
+    if (selectedUser && currentUser) {
+      // Mark as read when selected
+      fetch('/api/messages/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sender_id: selectedUser.id }),
+      })
+        .then(() => {
+          setUnreadCounts((prev) => {
+            const next = { ...prev };
+            delete next[selectedUser.id];
+            return next;
+          });
+        })
+        .catch(() => {});
+    }
+  }, [selectedUser, currentUser]);
+
+  const fetchUnreadCounts = () => {
+    if (currentUser) {
+      fetch('/api/messages/unread-counts')
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data: { sender_id: number; count: number }[]) => {
+          const counts: Record<number, number> = {};
+          data.forEach((row) => {
+            counts[row.sender_id] = row.count;
+          });
+          setUnreadCounts(counts);
+        })
+        .catch(() => {});
+    }
+  };
+
   useEffect(() => {
     fetch('/api/chat-rooms').then((r) => r.json()).then(setRooms).catch(() => setRooms([]));
     fetch('/api/users').then((r) => r.json()).then(setUsers).catch(() => setUsers([]));
-  }, []);
+    fetchUnreadCounts();
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (!currentUser) return;
     socketRef.current = io();
     socketRef.current.emit('join', currentUser.id);
 
+    socketRef.current.on('online_users', (userIds: number[]) => {
+      setOnlineUsers(new Set(userIds));
+    });
+
     socketRef.current.on('receive_message', (message) => {
+      shouldScrollToBottomRef.current = true;
       setDmMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+      
+      if (message.sender_id !== currentUser.id) {
+        if (!selectedUserRef.current || selectedUserRef.current.id !== message.sender_id) {
+          setUnreadCounts((prev) => ({
+            ...prev,
+            [message.sender_id]: (prev[message.sender_id] || 0) + 1,
+          }));
+        } else {
+          // Mark as read immediately
+          fetch('/api/messages/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sender_id: message.sender_id }),
+          }).catch(() => {});
+        }
+      }
     });
 
     socketRef.current.on('room_message', (message: RoomMessage) => {
+      shouldScrollToBottomRef.current = true;
       setRoomMessages((prev) => {
         if (prev.some((m) => m.id === message.id)) return prev;
         return [...prev, message];
@@ -72,9 +140,16 @@ export function Chat() {
   useEffect(() => {
     if (selectedRoom && currentUser) {
       socketRef.current?.emit('join_room', selectedRoom.id);
-      fetch(`/api/chat-rooms/${selectedRoom.id}/messages`)
+      shouldScrollToBottomRef.current = true;
+      setHasMoreRoomMsgs(true);
+      fetch(`/api/chat-rooms/${selectedRoom.id}/messages?limit=50&offset=0`)
         .then((r) => r.json())
-        .then(setRoomMessages)
+        .then((msgs) => {
+          setRoomMessages(msgs);
+          if (msgs.length < 50) {
+            setHasMoreRoomMsgs(false);
+          }
+        })
         .catch(() => setRoomMessages([]));
       return () => {
         socketRef.current?.emit('leave_room', selectedRoom.id);
@@ -84,16 +159,71 @@ export function Chat() {
 
   useEffect(() => {
     if (currentUser && selectedUser) {
-      fetch(`/api/messages/${currentUser.id}/${selectedUser.id}`)
+      shouldScrollToBottomRef.current = true;
+      setHasMoreDms(true);
+      fetch(`/api/messages/${currentUser.id}/${selectedUser.id}?limit=50&offset=0`)
         .then((r) => r.json())
-        .then(setDmMessages)
+        .then((msgs) => {
+          setDmMessages(msgs);
+          if (msgs.length < 50) {
+            setHasMoreDms(false);
+          }
+        })
         .catch(() => setDmMessages([]));
     }
   }, [currentUser?.id, selectedUser?.id]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (shouldScrollToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [roomMessages, dmMessages]);
+
+  const loadMoreRoomMessages = () => {
+    if (loadingMoreRoomMsgs || !hasMoreRoomMsgs || !selectedRoom) return;
+    setLoadingMoreRoomMsgs(true);
+    shouldScrollToBottomRef.current = false;
+    const offset = roomMessages.length;
+    fetch(`/api/chat-rooms/${selectedRoom.id}/messages?limit=50&offset=${offset}`)
+      .then((r) => r.json())
+      .then((newMsgs) => {
+        if (newMsgs.length < 50) {
+          setHasMoreRoomMsgs(false);
+        }
+        if (newMsgs.length > 0) {
+          setRoomMessages((prev) => {
+            const existingIds = new Set(prev.map(m => m.id));
+            const filteredNew = newMsgs.filter((m: any) => !existingIds.has(m.id));
+            return [...filteredNew, ...prev];
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingMoreRoomMsgs(false));
+  };
+
+  const loadMoreDms = () => {
+    if (loadingMoreDms || !hasMoreDms || !currentUser || !selectedUser) return;
+    setLoadingMoreDms(true);
+    shouldScrollToBottomRef.current = false;
+    const offset = dmConversationMessages.length;
+    fetch(`/api/messages/${currentUser.id}/${selectedUser.id}?limit=50&offset=${offset}`)
+      .then((r) => r.json())
+      .then((newMsgs) => {
+        if (newMsgs.length < 50) {
+          setHasMoreDms(false);
+        }
+        if (newMsgs.length > 0) {
+          setDmMessages((prev) => {
+            const existingIds = new Set(prev.map(m => m.id));
+            const filteredNew = newMsgs.filter((m: any) => !existingIds.has(m.id));
+            return [...filteredNew, ...prev];
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingMoreDms(false));
+  };
 
   const leaveRoom = () => {
     if (selectedRoom) socketRef.current?.emit('leave_room', selectedRoom.id);
@@ -104,6 +234,7 @@ export function Chat() {
   const sendRoomMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedRoom || !currentUser) return;
+    shouldScrollToBottomRef.current = true;
     socketRef.current?.emit('send_room_message', {
       room_id: selectedRoom.id,
       user_id: currentUser.id,
@@ -115,6 +246,7 @@ export function Chat() {
   const sendDmMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedUser || !currentUser) return;
+    shouldScrollToBottomRef.current = true;
     socketRef.current?.emit('send_message', {
       sender_id: currentUser.id,
       receiver_id: selectedUser.id,
@@ -242,16 +374,29 @@ export function Chat() {
                   selectedUser?.id === u.id ? 'bg-indigo-100 border border-indigo-200' : 'hover:bg-stone-100'
                 )}
               >
-                <div className="bg-stone-200 w-8 h-8 rounded-full flex items-center justify-center shrink-0">
-                  <User className="w-4 h-4 text-stone-500" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-stone-900 truncate text-sm">{u.name}</span>
-                    <TierBadge tier={u.tier} />
+                <div className="relative shrink-0">
+                  <div className="bg-stone-200 w-8 h-8 rounded-full flex items-center justify-center">
+                    <User className="w-4 h-4 text-stone-500" />
                   </div>
-                  {u.university && (
-                    <p className="text-[10px] text-stone-400 truncate">{u.university}</p>
+                  {onlineUsers.has(u.id) && (
+                    <span className="absolute bottom-0 right-0 block h-2 w-2 rounded-full ring-2 ring-white bg-emerald-500 animate-pulse" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 flex items-center justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-stone-900 truncate text-sm">{u.name}</span>
+                      <TierBadge tier={u.tier} />
+                      <UserRoleBadge role={u.profile_role} className="scale-[0.8] origin-left shrink-0" />
+                    </div>
+                    {u.university && (
+                      <p className="text-[10px] text-stone-400 truncate">{u.university}</p>
+                    )}
+                  </div>
+                  {unreadCounts[u.id] > 0 && (
+                    <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 min-w-4 text-center">
+                      {unreadCounts[u.id]}
+                    </span>
                   )}
                 </div>
               </button>
@@ -283,6 +428,18 @@ export function Chat() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-stone-50/50">
+              {hasMoreRoomMsgs && roomMessages.length > 0 && (
+                <div className="flex justify-center pb-2">
+                  <button
+                    onClick={loadMoreRoomMessages}
+                    disabled={loadingMoreRoomMsgs}
+                    className="text-xs text-indigo-650 hover:text-indigo-800 font-bold py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 rounded-full transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                  >
+                    {loadingMoreRoomMsgs && <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />}
+                    Cargar mensajes anteriores
+                  </button>
+                </div>
+              )}
               {roomMessages.length === 0 ? (
                 <div className="text-center text-stone-400 mt-8">
                   <MessageCircle className="w-12 h-12 mx-auto mb-2 opacity-20" />
@@ -299,7 +456,12 @@ export function Chat() {
                           isMe ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-white border border-stone-200 text-stone-800 rounded-bl-none shadow-sm'
                         )}
                       >
-                        {!isMe && <p className="text-xs font-medium text-indigo-600 mb-0.5">{msg.user_name}</p>}
+                        {!isMe && (
+                          <div className="flex items-center gap-1 mb-0.5">
+                            <p className="text-xs font-medium text-indigo-600">{msg.user_name}</p>
+                            <UserRoleBadge role={(msg as any).user_role} className="scale-[0.8] origin-left shrink-0" />
+                          </div>
+                        )}
                         <p>{msg.content}</p>
                         <p className={clsx('text-[10px] mt-1', isMe ? 'text-indigo-200' : 'text-stone-400')}>
                           {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -334,6 +496,7 @@ export function Chat() {
                 <div className="flex items-center gap-2">
                   <h3 className="font-bold text-stone-900">{selectedUser.name}</h3>
                   <TierBadge tier={selectedUser.tier} />
+                  <UserRoleBadge role={selectedUser.profile_role} />
                 </div>
                 <p className="text-xs text-stone-500">
                   {selectedUser.university ? `${selectedUser.university} · ` : ''}Mensaje directo
@@ -341,6 +504,18 @@ export function Chat() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-stone-50/50">
+              {hasMoreDms && dmConversationMessages.length > 0 && (
+                <div className="flex justify-center pb-2">
+                  <button
+                    onClick={loadMoreDms}
+                    disabled={loadingMoreDms}
+                    className="text-xs text-indigo-650 hover:text-indigo-800 font-bold py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 rounded-full transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                  >
+                    {loadingMoreDms && <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />}
+                    Cargar mensajes anteriores
+                  </button>
+                </div>
+              )}
               {dmConversationMessages.length === 0 ? (
                 <div className="text-center text-stone-400 mt-12">
                   <User className="w-12 h-12 mx-auto mb-3 opacity-20" />

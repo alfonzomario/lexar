@@ -56,6 +56,15 @@ export function SubjectDetail() {
   const [privateNoteEditing, setPrivateNoteEditing] = useState<string | null>(null);
   const [privateNotes, setPrivateNotes] = useState<Record<string, string>>({});
 
+  const [editExamModal, setEditExamModal] = useState(false);
+  const [editingExamId, setEditingExamId] = useState<number | null>(null);
+  const [editExamTitle, setEditExamTitle] = useState('');
+  const [editExamDesc, setEditExamDesc] = useState('');
+  const [editExamUrl, setEditExamUrl] = useState('');
+  const [editExamYear, setEditExamYear] = useState('');
+  const [editExamUniversityId, setEditExamUniversityId] = useState('');
+  const [submittingEditExam, setSubmittingEditExam] = useState(false);
+
   const headers = () => (user ? { 'X-User-Id': String(user.id) } : {});
 
   const openPrivateNoteEditor = (resourceType: string, resourceId: number) => {
@@ -194,9 +203,9 @@ export function SubjectDetail() {
   const { data: subject } = useQuery({
     queryKey: ['subject', id],
     queryFn: async () => {
-      const res = await fetch('/api/subjects');
-      const data = await res.json();
-      return data.find((s: any) => s.id === Number(id));
+      const res = await fetch(`/api/subjects/${id}`);
+      if (!res.ok) throw new Error('Failed to fetch subject');
+      return res.json();
     },
     enabled: !!id,
   });
@@ -204,13 +213,9 @@ export function SubjectDetail() {
   const { data: briefs = [] } = useQuery({
     queryKey: ['briefs', id],
     queryFn: async () => {
-      const res = await fetch('/api/briefs');
-      const data = await res.json();
-      const sid = Number(id);
-      return data.filter((b: any) => {
-        const ids = b.subject_ids ? String(b.subject_ids).split(',').map((n: string) => Number(n.trim())) : [];
-        return ids.includes(sid);
-      });
+      const res = await fetch(`/api/briefs?subject_id=${id}`);
+      if (!res.ok) throw new Error('Failed to fetch briefs');
+      return res.json();
     },
     enabled: !!id,
   });
@@ -347,6 +352,48 @@ export function SubjectDetail() {
       queryClient.invalidateQueries({ queryKey: ['exams', id, universityId] });
     } catch (e) {
       alert('Error al eliminar');
+    }
+  };
+
+  const handleOpenEditExam = (ex: any) => {
+    setEditingExamId(ex.id);
+    setEditExamTitle(ex.title || '');
+    setEditExamDesc(ex.description || '');
+    setEditExamUrl(ex.file_url || '');
+    setEditExamYear(ex.year ? String(ex.year) : '');
+    setEditExamUniversityId(ex.university_id ? String(ex.university_id) : '');
+    setEditExamModal(true);
+  };
+
+  const handleEditExamSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !editingExamId || !editExamTitle.trim() || !editExamUrl.trim()) return;
+    setSubmittingEditExam(true);
+    try {
+      const res = await fetch(`/api/exams/${editingExamId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...headers() },
+        body: JSON.stringify({
+          title: editExamTitle.trim(),
+          description: editExamDesc.trim() || null,
+          file_url: editExamUrl.trim(),
+          year: editExamYear.trim() ? parseInt(editExamYear, 10) : null,
+          university_id: editExamUniversityId.trim() ? parseInt(editExamUniversityId, 10) : null,
+          subject_id: id ? parseInt(id, 10) : null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'No se pudo editar el examen');
+        return;
+      }
+      setEditExamModal(false);
+      setEditingExamId(null);
+      queryClient.invalidateQueries({ queryKey: ['exams', id, universityId] });
+    } catch (err) {
+      alert('Error al editar');
+    } finally {
+      setSubmittingEditExam(false);
     }
   };
 
@@ -800,15 +847,16 @@ export function SubjectDetail() {
                                   <Bookmark className={clsx('w-4 h-4', savedForLaterIds.has(`exam-${ex.id}`) && 'fill-current')} />
                                 </button>
                               )}
-                              {isSuperAdmin && (
+                              {user && (user.id === ex.uploaded_by || user.tier === 'super_admin' || user.tier === 'admin') && (
+                                <div className="flex items-center gap-1">
+                                  <button onClick={() => handleOpenEditExam(ex)} className="p-2 text-stone-400 hover:bg-stone-50 hover:text-indigo-600 rounded-lg" title="Editar"><Pencil className="w-4 h-4" /></button>
+                                  <button onClick={() => handleDeleteExam(ex.id)} className="p-2 text-stone-400 hover:bg-red-50 hover:text-red-600 rounded-lg" title="Eliminar"><Trash2 className="w-4 h-4" /></button>
+                                </div>
+                              )}
+                              {isSuperAdmin && ex.status === 'pending' && (
                                 <>
-                                  {ex.status === 'pending' && (
-                                    <>
-                                      <button onClick={() => handleApproveExam(ex.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Aprobar"><Check className="w-5 h-5" /></button>
-                                      <button onClick={() => handleRejectExam(ex.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="Rechazar"><XCircle className="w-5 h-5" /></button>
-                                    </>
-                                  )}
-                                  <button onClick={() => handleDeleteExam(ex.id)} className="p-2 text-stone-400 hover:bg-red-50 hover:text-red-600 rounded-lg" title="Eliminar"><Trash2 className="w-5 h-5" /></button>
+                                  <button onClick={() => handleApproveExam(ex.id)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Aprobar"><Check className="w-5 h-5" /></button>
+                                  <button onClick={() => handleRejectExam(ex.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg" title="Rechazar"><XCircle className="w-5 h-5" /></button>
                                 </>
                               )}
                               {ex.status === 'pending' && !isSuperAdmin && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded">Pendiente de aprobación</span>}
@@ -991,6 +1039,50 @@ export function SubjectDetail() {
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setExamModal(false)} className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-700 font-medium">Cancelar</button>
                 <button type="submit" disabled={submittingExam || !examTitle.trim() || !examUrl.trim()} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-medium disabled:opacity-50">{submittingExam ? 'Subiendo...' : 'Subir'}</button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {editExamModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => !submittingEditExam && setEditExamModal(false)}>
+          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-stone-900">Editar examen</h2>
+              <button type="button" onClick={() => !submittingEditExam && setEditExamModal(false)} className="p-2 text-stone-400 hover:text-stone-600 rounded-lg"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={handleEditExamSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Título *</label>
+                <input type="text" value={editExamTitle} onChange={(e) => setEditExamTitle(e.target.value)} className="w-full border border-stone-200 rounded-xl px-4 py-2.5" required />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">Año</label>
+                  <input type="number" min={1990} max={2030} value={editExamYear} onChange={(e) => setEditExamYear(e.target.value)} className="w-full border border-stone-200 rounded-xl px-4 py-2.5" placeholder="Ej. 2024" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-1">Universidad</label>
+                  <select value={editExamUniversityId} onChange={(e) => setEditExamUniversityId(e.target.value)} className="w-full border border-stone-200 rounded-xl px-4 py-2.5 bg-white">
+                    <option value="">— Elegir —</option>
+                    {universities.map((u) => (
+                      <option key={u.id} value={u.id}>{u.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Link de Google Drive (público) *</label>
+                <input type="url" value={editExamUrl} onChange={(e) => setEditExamUrl(e.target.value)} className="w-full border border-stone-200 rounded-xl px-4 py-2.5" placeholder="https://drive.google.com/file/d/..." required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Descripción (opcional)</label>
+                <textarea value={editExamDesc} onChange={(e) => setEditExamDesc(e.target.value)} className="w-full border border-stone-200 rounded-xl px-4 py-2.5 resize-none" rows={2} />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setEditExamModal(false)} className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-700 font-medium">Cancelar</button>
+                <button type="submit" disabled={submittingEditExam || !editExamTitle.trim() || !editExamUrl.trim()} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-medium disabled:opacity-50">{submittingEditExam ? 'Guardando...' : 'Guardar'}</button>
               </div>
             </form>
           </motion.div>

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-import { useParams, Link, useNavigate } from 'react-router';
-import { Scale, ArrowLeft, FileText, Bookmark, Share2, AlertCircle, Sparkles, Trash2, Calendar, Users, Landmark, Book, BookText, X } from 'lucide-react';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router';
+import { Scale, ArrowLeft, FileText, Bookmark, Share2, AlertCircle, Sparkles, Trash2, Calendar, Users, Landmark, Book, BookText, X, Check, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import Markdown from 'react-markdown';
@@ -8,6 +8,7 @@ import { BalanzaLoader } from '../components/BalanzaLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { HighlightableText } from '../components/HighlightableText';
 import { LegalTextRenderer } from '../components/LegalTextRenderer';
+import { BriefAiChat } from '../components/BriefAiChat';
 
 /** Formatea texto para lectura: normaliza espacios y preserva párrafos */
 function formatParagraphs(text: string | null | undefined): string {
@@ -24,15 +25,42 @@ function formatParagraphs(text: string | null | undefined): string {
 export function BriefDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const highlightQuery = searchParams.get('highlight');
   const { user } = useAuth();
   const [brief, setBrief] = useState<any>(null);
   const [annotations, setAnnotations] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState('tldr');
+  const [activeTab, setActiveTab] = useState(highlightQuery ? 'full' : 'tldr');
   const [savedForLater, setSavedForLater] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
   const isBasicOrAbove = user && ['basic', 'pro', 'admin', 'super_admin'].includes(user.tier);
   const isPro = user?.tier === 'pro' || user?.tier === 'admin' || user?.tier === 'super_admin';
+
+  const handleShare = async () => {
+    if (!brief) return;
+    const shareData = {
+      title: `${brief.title} - LexARG`,
+      text: brief.summary_tldr || brief.title,
+      url: window.location.href,
+    };
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+      try {
+        await navigator.share(shareData);
+      } catch (err) {
+        console.log('Share aborted or failed:', err);
+      }
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
 
   // Active Highlight & Comment states (Google Docs style)
   const [activeAnnotationId, setActiveAnnotationId] = useState<number | null>(null);
@@ -61,6 +89,19 @@ export function BriefDetail() {
 
     fetchAnnotations();
   }, [id, user]);
+
+  useEffect(() => {
+    if (highlightQuery && brief) {
+      setActiveTab('full');
+      const timer = setTimeout(() => {
+        const el = document.getElementById('annotation-span--999');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [highlightQuery, brief]);
 
   useEffect(() => {
     if (!user || !isBasicOrAbove || !id) return;
@@ -95,48 +136,7 @@ export function BriefDetail() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSendMessage = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!input.trim() || aiLoading || !brief || !id) return;
 
-    const userMessage = input.trim();
-    setInput('');
-    setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
-    setAiLoading(true);
-    setMessages(prev => [...prev, { role: 'model', text: '' }]);
-
-    try {
-      const res = await fetch(`/api/briefs/${id}/ai-chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setMessages(prev => {
-          const next = [...prev];
-          next[next.length - 1] = { role: 'model', text: data.error || 'Error de conexión con la IA. Por favor, reintenta.' };
-          return next;
-        });
-        return;
-      }
-      setMessages(prev => {
-        const next = [...prev];
-        next[next.length - 1] = { role: 'model', text: data.text ?? '' };
-        return next;
-      });
-    } catch (error) {
-      console.error('Error in chat:', error);
-      setMessages(prev => {
-        const next = [...prev];
-        next[next.length - 1] = { role: 'model', text: 'Error de conexión con la IA. Por favor, reintenta.' };
-        return next;
-      });
-    } finally {
-      setAiLoading(false);
-    }
-  };
 
   const handleAddAnnotation = async (text: string, note: string) => {
     if (!user) return;
@@ -217,6 +217,19 @@ export function BriefDetail() {
   let citationsArr: any[] = [];
   try { if (brief?.citations) citationsArr = JSON.parse(brief.citations); } catch(e) {}
 
+  const displayAnnotations = highlightQuery
+    ? [
+        ...annotations,
+        {
+          id: -999,
+          selected_text: highlightQuery,
+          note: 'Referencia citada en la normativa',
+          color: 'bg-indigo-100 text-indigo-900 border-b-2 border-indigo-500 font-bold',
+          created_at: new Date().toISOString()
+        }
+      ]
+    : annotations;
+
   if (!brief) return (
     <div className="flex h-[60vh] items-center justify-center">
       <BalanzaLoader size="lg" text="Analizando Jurisprudencia..." />
@@ -263,8 +276,11 @@ export function BriefDetail() {
                   <Bookmark className={clsx('w-5 h-5', savedForLater && 'fill-current')} />
                 </button>
               )}
-              <button className="p-2 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors">
-                <Share2 className="w-5 h-5" />
+              <button onClick={handleShare} className="p-2 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="Compartir link">
+                {copied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
+              </button>
+              <button onClick={handlePrint} className="p-2 text-stone-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="Descargar PDF">
+                <Download className="w-5 h-5" />
               </button>
               {!brief.is_demo && (
                 <button
@@ -351,7 +367,7 @@ export function BriefDetail() {
             <div className="text-base md:text-lg text-stone-850 leading-[1.9] whitespace-pre-line" style={{ fontFamily: "'Lora', Georgia, serif" }}>
               <HighlightableText
                 text={brief.full_text || brief.facts || ''}
-                annotations={annotations}
+                annotations={displayAnnotations}
                 onAddAnnotation={handleAddAnnotation}
                 activeAnnotationId={activeAnnotationId}
                 setActiveAnnotationId={setActiveAnnotationId}
@@ -592,183 +608,41 @@ export function BriefDetail() {
                 )}
               </div>
             )}
-            <div className="bg-indigo-900 bg-gradient-to-br from-indigo-900 to-indigo-800 rounded-3xl p-6 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-indigo-700/50 h-[500px] md:h-[600px] flex flex-col">
-              <div className="flex items-center gap-3 mb-6 shrink-0 border-b border-indigo-700/50 pb-4">
-                <div className="bg-white/10 p-2 inset-0 backdrop-blur-md rounded-xl border border-white/10 shadow-sm">
-                  <Sparkles className="w-5 h-5 text-indigo-200" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg tracking-tight">Asistente LexARG</h3>
-                  <p className="text-[10px] text-indigo-300 uppercase tracking-widest font-semibold flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    IA Especializada
-                  </p>
-                </div>
-              </div>
-
-              {/* Chat Messages */}
-              <div className="flex-1 overflow-y-auto pr-2 mb-4 space-y-4 custom-scrollbar">
-                {messages.length === 0 ? (
-                  <div className="text-center py-8 space-y-4">
-                    <p className="text-sm text-indigo-200 leading-relaxed">
-                      ¿Tenes dudas sobre este fallo? Preguntame lo que quieras.
-                    </p>
-                    <div className="grid grid-cols-1 gap-2">
-                      {[
-                        "¿Cuál fue la decisión principal?",
-                        "Explicame los hechos",
-                        "¿Por qué es importante este fallo?",
-                        "Resumí los argumentos"
-                      ].map((suggestion) => (
-                        <button
-                          key={suggestion}
-                          onClick={() => setInput(suggestion)}
-                          className="text-left p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-stone-300 hover:bg-white/10 transition-all font-sans"
-                        >
-                          {suggestion}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  messages.map((msg, idx) => (
-                    <div key={idx} className={clsx("flex flex-col space-y-1", msg.role === 'user' ? "items-end" : "items-start")}>
-                      <div className={clsx("max-w-[90%] p-3 rounded-2xl text-sm font-sans", msg.role === 'user' ? "bg-indigo-600 text-white rounded-tr-none" : "bg-white/10 text-stone-200 rounded-tl-none")}>
-                        <div className="markdown-body prose prose-invert prose-sm max-w-none">
-                          <Markdown>{msg.text}</Markdown>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-                {aiLoading && (
-                  <div className="flex gap-1 p-2">
-                    <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" />
-                    <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                    <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]" />
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* Chat Input */}
-              <form onSubmit={handleSendMessage} className="relative shrink-0 font-sans">
-                <input
-                  type="text"
-                  placeholder="Preguntá sobre el fallo..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  disabled={aiLoading}
-                  className="w-full bg-white/10 border border-white/20 rounded-2xl py-3 pl-4 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all disabled:opacity-50"
-                />
-                <button
-                  type="submit"
-                  disabled={aiLoading || !input.trim()}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:bg-stone-700"
-                >
-                  <Sparkles className="w-4 h-4 text-white" />
-                </button>
-              </form>
-              <p className="text-[9px] text-stone-500 italic mt-3 text-center">
-                * Respuestas generadas por IA. No constituye asesoramiento legal.
-              </p>
-            </div>
+            <BriefAiChat
+              briefId={id!}
+              messages={messages}
+              setMessages={setMessages}
+              input={input}
+              setInput={setInput}
+              aiLoading={aiLoading}
+              setAiLoading={setAiLoading}
+            />
           </div>
         </div>
       )}
 
       {/* Floating AI Widget (only visible in full tab) */}
       {activeTab === 'full' && (
-        <div className="fixed bottom-6 right-6 z-50 font-sans">
+        <div className="fixed bottom-6 right-6 z-50 font-sans lg:hidden">
           <AnimatePresence>
             {isAiChatOpen && (
               <motion.div
                 initial={{ opacity: 0, y: 20, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 20, scale: 0.9 }}
-                className="absolute bottom-16 right-0 w-80 md:w-96 bg-indigo-900 bg-gradient-to-br from-indigo-900 to-indigo-850 rounded-3xl p-5 text-white shadow-2xl border border-indigo-700/50 h-[500px] md:h-[550px] flex flex-col overflow-hidden"
+                className="absolute bottom-16 right-0 z-50 shrink-0"
               >
-                <div className="flex items-center justify-between shrink-0 border-b border-indigo-700/50 pb-3 mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="bg-white/10 p-2 backdrop-blur-md rounded-xl border border-white/10">
-                      <Sparkles className="w-4 h-4 text-indigo-200" />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-base tracking-tight">Asistente LexARG</h3>
-                      <p className="text-[9px] text-indigo-300 uppercase tracking-widest font-semibold flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                        IA Especializada
-                      </p>
-                    </div>
-                  </div>
-                  <button onClick={() => setIsAiChatOpen(false)} className="text-indigo-250 hover:text-white transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* Chat Messages */}
-                <div className="flex-1 overflow-y-auto pr-1 mb-3 space-y-3 custom-scrollbar text-left">
-                  {messages.length === 0 ? (
-                    <div className="text-center py-6 space-y-3">
-                      <p className="text-xs text-indigo-200 leading-relaxed">
-                        ¿Tenés dudas sobre este fallo? Preguntame lo que quieras.
-                      </p>
-                      <div className="grid grid-cols-1 gap-2">
-                        {[
-                          "¿Cuál fue la decisión principal?",
-                          "Explicame los hechos",
-                          "¿Por qué es importante este fallo?",
-                          "Resumí los argumentos"
-                        ].map((suggestion) => (
-                          <button
-                            key={suggestion}
-                            onClick={() => setInput(suggestion)}
-                            className="text-left p-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-indigo-200 hover:bg-white/10 transition-all font-sans"
-                          >
-                            {suggestion}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    messages.map((msg, idx) => (
-                      <div key={idx} className={clsx("flex flex-col space-y-1", msg.role === 'user' ? "items-end" : "items-start")}>
-                        <div className={clsx("max-w-[90%] p-3 rounded-2xl text-xs font-sans", msg.role === 'user' ? "bg-indigo-600 text-white rounded-tr-none" : "bg-white/10 text-stone-205 rounded-tl-none")}>
-                          <div className="markdown-body prose prose-invert prose-xs max-w-none">
-                            <Markdown>{msg.text}</Markdown>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                  {aiLoading && (
-                    <div className="flex gap-1 p-2">
-                      <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" />
-                      <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                      <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]" />
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                {/* Chat Input */}
-                <form onSubmit={handleSendMessage} className="relative shrink-0 font-sans mt-auto">
-                  <input
-                    type="text"
-                    placeholder="Preguntá sobre el fallo..."
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    disabled={aiLoading}
-                    className="w-full bg-white/10 border border-white/20 rounded-2xl py-2.5 pl-4 pr-10 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all disabled:opacity-50 text-white placeholder-indigo-300"
-                  />
-                  <button
-                    type="submit"
-                    disabled={aiLoading || !input.trim()}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:bg-indigo-800"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-white" />
-                  </button>
-                </form>
+                <BriefAiChat
+                  briefId={id!}
+                  messages={messages}
+                  setMessages={setMessages}
+                  input={input}
+                  setInput={setInput}
+                  aiLoading={aiLoading}
+                  setAiLoading={setAiLoading}
+                  isFloating={true}
+                  onClose={() => setIsAiChatOpen(false)}
+                />
               </motion.div>
             )}
           </AnimatePresence>

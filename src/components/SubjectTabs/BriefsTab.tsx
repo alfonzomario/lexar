@@ -6,13 +6,9 @@ export function BriefsTab({ subjectId }: { subjectId: number }) {
   const { data: briefs = [], isLoading } = useQuery({
     queryKey: ['briefs', subjectId],
     queryFn: async () => {
-      const res = await fetch('/api/briefs');
-      if (!res.ok) throw new Error('Failed to fetch');
-      const data = await res.json();
-      return data.filter((b: any) => {
-        const ids = b.subject_ids ? String(b.subject_ids).split(',').map((n: string) => Number(n.trim())) : [];
-        return ids.includes(subjectId);
-      });
+      const res = await fetch(`/api/briefs?subject_id=${subjectId}`);
+      if (!res.ok) throw new Error('Failed to fetch briefs');
+      return res.json();
     }
   });
 

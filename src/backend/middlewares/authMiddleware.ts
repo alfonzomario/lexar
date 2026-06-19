@@ -20,17 +20,6 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
     token = req.headers.authorization.split(' ')[1];
   }
 
-  // Support legacy x-user-id for backwards compatibility during migration (Optional but helpful)
-  if (!token && req.headers['x-user-id']) {
-    const legacyId = parseInt(req.headers['x-user-id'] as string, 10);
-    if (!isNaN(legacyId)) {
-        const u = db.prepare('SELECT id, tier, email FROM users WHERE id = ?').get(legacyId) as any;
-        if (u) {
-            req.user = { userId: u.id, tier: u.tier, email: u.email };
-            return next();
-        }
-    }
-  }
 
   if (!token) {
      res.status(401).json({ error: 'No se proporcionó token de autenticación. Inicia sesión.' });

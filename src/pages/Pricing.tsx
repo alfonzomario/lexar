@@ -1,12 +1,22 @@
-import { Check, MessageCircle, Briefcase, FileText, ArrowRight } from 'lucide-react';
-import { motion } from 'motion/react';
+import { useState } from 'react';
+import { Check, MessageCircle, Briefcase, FileText, ArrowRight, X, CreditCard, ShieldCheck } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router';
 import { clsx } from 'clsx';
 
 export function Pricing() {
-  const { user, login } = useAuth();
+  const { user, login, fetchCurrentUser } = useAuth();
   const navigate = useNavigate();
+
+  const [selectedPlan, setSelectedPlan] = useState<any | null>(null);
+  const [cardNumber, setCardNumber] = useState('4517 8400 0000 0000');
+  const [cardName, setCardName] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('12/29');
+  const [cardCvv, setCardCvv] = useState('123');
+  const [isPaying, setIsPaying] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
 
   const plans = [
     {
@@ -67,8 +77,40 @@ export function Pricing() {
       // Already on this plan, go to dashboard
       navigate('/');
     } else {
-      // In a real app, this would open a Stripe/MercadoPago modal
-      alert(`Flujo de pago simulado para mejorar al plan ${planId.toUpperCase()}`);
+      const plan = plans.find(p => p.id === planId);
+      if (plan) {
+        setSelectedPlan(plan);
+        setCardName(user.name || '');
+        setPaymentSuccess(false);
+        setPaymentError('');
+      }
+    }
+  };
+
+  const handleConfirmPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPlan || !user) return;
+    setIsPaying(true);
+    setPaymentError('');
+    try {
+      const res = await fetch('/api/auth/me', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ tier: selectedPlan.id })
+      });
+      if (res.ok) {
+        setPaymentSuccess(true);
+        await fetchCurrentUser();
+      } else {
+        const errData = await res.json();
+        setPaymentError(errData.error || 'Error al procesar el pago simulado.');
+      }
+    } catch (err) {
+      setPaymentError('Error de red al conectar con el servidor.');
+    } finally {
+      setIsPaying(false);
     }
   };
 
@@ -214,6 +256,139 @@ export function Pricing() {
           </div>
         </div>
       </div>
+
+      {/* Checkout Payment Modal */}
+      {selectedPlan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-stone-200"
+          >
+            {/* Header */}
+            <div className="bg-stone-900 text-white p-6 relative">
+              <button
+                onClick={() => setSelectedPlan(null)}
+                className="absolute top-4 right-4 p-1.5 text-stone-400 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-3">
+                <CreditCard className="w-6 h-6 text-indigo-400" />
+                <div>
+                  <h3 className="font-bold text-lg font-sans">Pasarela de Pago</h3>
+                  <p className="text-xs text-stone-400">Modo Sandbox de Simulación</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Content */}
+            {!paymentSuccess ? (
+              <form onSubmit={handleConfirmPayment} className="p-6 space-y-6">
+                <div>
+                  <div className="flex justify-between items-center bg-stone-50 p-4 rounded-2xl border border-stone-100 mb-4">
+                    <div>
+                      <p className="text-xs text-stone-500 font-semibold uppercase tracking-wider">Plan Seleccionado</p>
+                      <p className="font-bold text-stone-900 text-lg">LexAR {selectedPlan.name}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-extrabold text-indigo-600 text-xl">{selectedPlan.price}</p>
+                      <p className="text-[10px] text-stone-500 font-semibold">{selectedPlan.period || '/único'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {paymentError && (
+                  <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3.5 rounded-xl text-xs font-semibold">
+                    {paymentError}
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-1.5">Número de Tarjeta</label>
+                    <input
+                      type="text"
+                      required
+                      value={cardNumber}
+                      onChange={(e) => setCardNumber(e.target.value)}
+                      className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-1.5">Nombre del Titular</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej. Juan Pérez"
+                      value={cardName}
+                      onChange={(e) => setCardName(e.target.value)}
+                      className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-1.5">Vencimiento</label>
+                      <input
+                        type="text"
+                        required
+                        value={cardExpiry}
+                        onChange={(e) => setCardExpiry(e.target.value)}
+                        className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-center font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-stone-500 uppercase tracking-wider mb-1.5">CVC / CVV</label>
+                      <input
+                        type="text"
+                        required
+                        value={cardCvv}
+                        onChange={(e) => setCardCvv(e.target.value)}
+                        className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all text-center font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isPaying}
+                  className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors text-sm shadow-lg shadow-indigo-600/10"
+                >
+                  {isPaying ? 'Procesando simulación...' : 'Confirmar Pago Simulado'}
+                </button>
+
+                <p className="text-[10px] text-stone-400 text-center leading-relaxed">
+                  Esta es una simulación de pasarela de pago para propósitos académicos y de demostración. No se realizará ningún cargo real.
+                </p>
+              </form>
+            ) : (
+              <div className="p-8 text-center space-y-6">
+                <div className="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto text-emerald-600">
+                  <ShieldCheck className="w-10 h-10" />
+                </div>
+                <div className="space-y-2">
+                  <h4 className="font-extrabold text-stone-900 text-xl font-sans">¡Transacción Exitosa!</h4>
+                  <p className="text-sm text-stone-550 leading-relaxed font-sans">
+                    Tu cuenta ha sido mejorada al plan <span className="font-bold text-stone-850">{selectedPlan.name}</span> de forma real en la base de datos de LexAR.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedPlan(null);
+                    navigate('/');
+                  }}
+                  className="w-full bg-stone-900 text-white font-bold py-3 rounded-xl hover:bg-stone-800 transition-colors text-sm"
+                >
+                  Volver al Inicio
+                </button>
+              </div>
+            )}
+          </motion.div>
+        </div>
+      )}
     </motion.div>
   );
 }

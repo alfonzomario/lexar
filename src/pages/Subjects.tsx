@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { BookOpen, Scale, ArrowRight, Plus, X, Loader2 } from 'lucide-react';
+import { BookOpen, Scale, ArrowRight, Plus, X, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAuth } from '../contexts/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -14,6 +14,12 @@ export function Subjects() {
   const [newDesc, setNewDesc] = useState('');
   const [newIcon, setNewIcon] = useState('BookOpen');
   const [error, setError] = useState('');
+
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingSubject, setEditingSubject] = useState<any>(null);
+  const [editName, setEditName] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editIcon, setEditIcon] = useState('BookOpen');
 
   const { data: subjects = [], isLoading } = useQuery({
     queryKey: ['subjects'],
@@ -56,6 +62,74 @@ export function Subjects() {
       description: newDesc.trim() || null, 
       icon: newIcon || null 
     });
+  };
+
+  const updateSubjectMutation = useMutation({
+    mutationFn: async (data: { id: number; name: string; description: string | null; icon: string | null }) => {
+      const res = await fetch(`/api/subjects/${data.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: data.name, description: data.description, icon: data.icon }),
+      });
+      const resData = await res.json();
+      if (!res.ok) throw new Error(resData.error || 'Error al actualizar');
+      return resData;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjects'] });
+      setShowEditModal(false);
+      setEditingSubject(null);
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Error al actualizar');
+    }
+  });
+
+  const deleteSubjectMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/subjects/${id}`, {
+        method: 'DELETE',
+      });
+      const resData = await res.json();
+      if (!res.ok) throw new Error(resData.error || 'Error al eliminar');
+      return resData;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjects'] });
+    },
+    onError: (err: any) => {
+      alert(err.message || 'Error al eliminar');
+    }
+  });
+
+  const handleEditSubjectSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !editingSubject || !editName.trim()) return;
+    setError('');
+    updateSubjectMutation.mutate({
+      id: editingSubject.id,
+      name: editName.trim(),
+      description: editDesc.trim() || null,
+      icon: editIcon || null
+    });
+  };
+
+  const handleOpenEditSubject = (e: React.MouseEvent, subject: any) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEditingSubject(subject);
+    setEditName(subject.name || '');
+    setEditDesc(subject.description || '');
+    setEditIcon(subject.icon || 'BookOpen');
+    setShowEditModal(true);
+  };
+
+  const handleDeleteSubject = (e: React.MouseEvent, id: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (window.confirm('¿Estás seguro de que querés eliminar esta materia? Se perderán las relaciones asociadas.')) {
+      deleteSubjectMutation.mutate(id);
+    }
   };
 
   const containerVariants = {
@@ -138,6 +212,56 @@ export function Subjects() {
         </div>
       )}
 
+      {showEditModal && editingSubject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => !updateSubjectMutation.isPending && setShowEditModal(false)}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-stone-900">Editar materia</h2>
+              <button type="button" onClick={() => !updateSubjectMutation.isPending && setShowEditModal(false)} className="p-2 text-stone-400 hover:text-stone-600 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleEditSubjectSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Nombre *</label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full border border-stone-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Ej. Derecho Constitucional"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-stone-700 mb-1">Descripción</label>
+                <textarea
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  className="w-full border border-stone-200 rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                  rows={3}
+                  placeholder="Breve descripción de la materia"
+                />
+              </div>
+              {error && <p className="text-sm text-red-600">{error}</p>}
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowEditModal(false)} className="flex-1 py-2.5 rounded-xl border border-stone-200 text-stone-700 font-medium hover:bg-stone-50">
+                  Cancelar
+                </button>
+                <button type="submit" disabled={updateSubjectMutation.isPending || !editName.trim()} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-50">
+                  {updateSubjectMutation.isPending ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
@@ -162,6 +286,25 @@ export function Subjects() {
                 className="bg-white p-6 rounded-2xl shadow-sm border border-stone-100 hover:border-indigo-200 hover:shadow-xl transition-all duration-300 group flex flex-col h-full relative overflow-hidden"
                 >
                 <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+
+                {isSuperAdmin && (
+                  <div className="absolute top-4 right-4 z-20 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <button
+                      onClick={(e) => handleOpenEditSubject(e, subject)}
+                      className="p-1.5 bg-white text-stone-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg shadow-sm border border-stone-100 transition-all cursor-pointer"
+                      title="Editar"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteSubject(e, subject.id)}
+                      className="p-1.5 bg-white text-stone-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg shadow-sm border border-stone-100 transition-all cursor-pointer"
+                      title="Eliminar"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 <div className="relative z-10 flex flex-col h-full">
                     <div className="bg-indigo-50 w-14 h-14 rounded-xl flex items-center justify-center mb-5 group-hover:scale-110 group-hover:bg-indigo-600 transition-all duration-300 shadow-sm">

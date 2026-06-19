@@ -18,6 +18,7 @@ interface AuthContextType {
     isPro: boolean;
     isBasic: boolean;
     isSuperAdmin: boolean;
+    fetchCurrentUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -84,7 +85,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             isLoading,
             isPro: user?.tier === 'pro' || user?.tier === 'admin' || user?.tier === 'super_admin',
             isBasic: user?.tier === 'basic' || user?.tier === 'pro' || user?.tier === 'admin' || user?.tier === 'super_admin',
-            isSuperAdmin: user?.tier === 'super_admin'
+            isSuperAdmin: user?.tier === 'super_admin',
+            fetchCurrentUser
         }}>
             {children}
         </AuthContext.Provider>

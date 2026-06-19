@@ -122,19 +122,11 @@ export function Latinisms() {
               </button>
               <h2 className="text-2xl font-bold font-serif text-stone-900 mb-1 pr-8">{item.term}</h2>
               <p className="text-emerald-600 font-medium text-sm mb-4">{item.translation}</p>
-              <div className="space-y-4 flex-1">
+              <div className="space-y-3 flex-1">
                 <div>
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-1">Significado</h3>
                   <p className="text-stone-700 text-sm leading-relaxed">{item.meaning}</p>
                 </div>
-                {item.example && (
-                  <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-1">Ejemplo</h3>
-                    <p className="text-stone-600 text-sm italic border-l-2 border-emerald-200 pl-3 py-1 bg-stone-50 rounded-r-md">
-                      "{item.example}"
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           ))}

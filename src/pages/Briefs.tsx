@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
 import { Scale, Search, Filter, Sparkles, Loader2, X, ChevronDown, Landmark, Calendar, Tag } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -15,25 +15,45 @@ export function Briefs() {
   const [filterTribunal, setFilterTribunal] = useState('');
   const [filterYear, setFilterYear] = useState('');
   const [filterTema, setFilterTema] = useState('');
+  const [page, setPage] = useState(1);
+  const limit = 9;
 
   const hasActiveFilters = !!filterTribunal || !!filterYear || !!filterTema;
 
-  const { data: briefs = [], isLoading, refetch } = useQuery({
-    queryKey: ['briefs', filterTribunal, filterYear, filterTema],
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [filterTribunal, filterYear, filterTema]);
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['briefs', filterTribunal, filterYear, filterTema, page],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filterTribunal) params.append('tribunal', filterTribunal);
       if (filterYear) params.append('year', filterYear);
       if (filterTema) params.append('tema', filterTema);
+      params.append('page', page.toString());
+      params.append('limit', limit.toString());
       const res = await fetch(`/api/briefs?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to fetch');
       return res.json();
     }
   });
 
-  // Extract unique values for filter dropdowns
-  const tribunals = [...new Set(briefs.map((b: any) => b.court).filter(Boolean))];
-  const years = [...new Set(briefs.map((b: any) => b.year).filter(Boolean))].sort((a: number, b: number) => b - a);
+  const briefs = data?.briefs || [];
+  const totalPages = data?.totalPages || 1;
+
+  const { data: filtersData } = useQuery({
+    queryKey: ['brief-filters'],
+    queryFn: async () => {
+      const res = await fetch('/api/briefs/filters');
+      if (!res.ok) throw new Error('Failed to fetch filters');
+      return res.json();
+    }
+  });
+
+  const tribunals = filtersData?.courts || [];
+  const years = filtersData?.years || [];
 
   const filteredBriefs = briefs.filter(
     (brief: any) =>
@@ -218,53 +238,76 @@ export function Briefs() {
           <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredBriefs.map((brief: any) => (
-            <Link
-              key={brief.id}
-              to={`/briefs/${brief.id}`}
-              className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-indigo-300 transition-all hover:shadow-md flex flex-col h-full"
-            >
-              <div className="flex flex-wrap gap-2 mb-3">
-                {brief.subject_names?.split(',').map((subject: string, idx: number) => (
-                  <span key={idx} className="bg-indigo-50 text-indigo-700 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                    {subject}
-                  </span>
-                ))}
-              </div>
-              <h3 className="text-lg font-bold text-stone-900 mb-2 leading-tight">
-                {brief.title}
-              </h3>
-              {/* Show court and year badges */}
-              {(brief.court || brief.year) && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredBriefs.map((brief: any) => (
+              <Link
+                key={brief.id}
+                to={`/briefs/${brief.id}`}
+                className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-indigo-300 transition-all hover:shadow-md flex flex-col h-full"
+              >
                 <div className="flex flex-wrap gap-2 mb-3">
-                  {brief.court && (
-                    <span className="text-[10px] font-medium text-stone-500 bg-stone-100 px-2 py-0.5 rounded-md flex items-center gap-1">
-                      <Landmark className="w-2.5 h-2.5" /> {brief.court}
+                  {brief.subject_names?.split(',').map((subject: string, idx: number) => (
+                    <span key={idx} className="bg-indigo-50 text-indigo-700 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                      {subject}
                     </span>
-                  )}
-                  {brief.year && (
-                    <span className="text-[10px] font-medium text-stone-500 bg-stone-100 px-2 py-0.5 rounded-md flex items-center gap-1">
-                      <Calendar className="w-2.5 h-2.5" /> {brief.year}
-                    </span>
-                  )}
+                  ))}
                 </div>
-              )}
-              <p className="text-stone-500 text-sm line-clamp-3 flex-1 mb-4">
-                {brief.relevance}
-              </p>
-              <div className="flex flex-wrap gap-1 mt-auto">
-                {brief.keywords?.split(',').slice(0, 3).map((keyword: string, idx: number) => (
-                  <span key={idx} className="bg-stone-100 text-stone-600 text-[10px] uppercase font-semibold px-2 py-1 rounded-md">
-                    {keyword.trim()}
-                  </span>
-                ))}
+                <h3 className="text-lg font-bold text-stone-900 mb-2 leading-tight">
+                  {brief.title}
+                </h3>
+                {/* Show court and year badges */}
+                {(brief.court || brief.year) && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {brief.court && (
+                      <span className="text-[10px] font-medium text-stone-500 bg-stone-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                        <Landmark className="w-2.5 h-2.5" /> {brief.court}
+                      </span>
+                    )}
+                    {brief.year && (
+                      <span className="text-[10px] font-medium text-stone-500 bg-stone-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                        <Calendar className="w-2.5 h-2.5" /> {brief.year}
+                      </span>
+                    )}
+                  </div>
+                )}
+                <p className="text-stone-500 text-sm line-clamp-3 flex-1 mb-4">
+                  {brief.relevance}
+                </p>
+                <div className="flex flex-wrap gap-1 mt-auto">
+                  {brief.keywords?.split(',').slice(0, 3).map((keyword: string, idx: number) => (
+                    <span key={idx} className="bg-stone-100 text-stone-600 text-[10px] uppercase font-semibold px-2 py-1 rounded-md">
+                      {keyword.trim()}
+                    </span>
+                  ))}
+                </div>
+              </Link>
+            ))}
+            {filteredBriefs.length === 0 && (
+              <div className="col-span-full text-center py-12 text-stone-500">
+                No se encontraron fallos que coincidan con tu búsqueda.
               </div>
-            </Link>
-          ))}
-          {filteredBriefs.length === 0 && (
-            <div className="col-span-full text-center py-12 text-stone-500">
-              No se encontraron fallos que coincidan con tu búsqueda.
+            )}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between bg-white px-6 py-4 rounded-2xl border border-stone-200 shadow-sm mt-4">
+              <button
+                onClick={() => setPage(prev => Math.max(prev - 1, 1))}
+                disabled={page === 1}
+                className="px-3 py-1.5 text-sm font-medium rounded-xl border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 disabled:opacity-50 transition-colors"
+              >
+                Anterior
+              </button>
+              <span className="text-sm text-stone-500 font-medium">
+                Página {page} de {totalPages}
+              </span>
+              <button
+                onClick={() => setPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={page === totalPages}
+                className="px-3 py-1.5 text-sm font-medium rounded-xl border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 disabled:opacity-50 transition-colors"
+              >
+                Siguiente
+              </button>
             </div>
           )}
         </div>

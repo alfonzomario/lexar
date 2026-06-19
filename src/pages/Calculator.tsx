@@ -15,7 +15,11 @@ export function Calculator() {
   useEffect(() => {
     fetch('/api/acts')
       .then((res) => res.json())
-      .then((data) => setActs(data));
+      .then((data) => setActs(data))
+      .catch((err) => {
+        console.error('Error fetching acts:', err);
+        setActs([]);
+      });
     fetch('/api/holidays')
       .then((res) => res.json())
       .then((data) => setHolidays(data.map((h: any) => h.date)))

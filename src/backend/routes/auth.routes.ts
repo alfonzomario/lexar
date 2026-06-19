@@ -9,9 +9,8 @@ import { authMiddleware, AuthRequest } from '../middlewares/authMiddleware.js';
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_for_development_lexargar';
 
-// --- REGISTER ---
 router.post('/register', async (req, res) => {
-    const { name, email, password, profile_role } = req.body;
+    const { name, email, password, profile_role, university, law_firm, court_specialty, dni, phone } = req.body;
     
     if (!name || !email || !password) {
         res.status(400).json({ error: 'Nombre, email y contraseña son obligatorios.' });
@@ -35,7 +34,12 @@ router.post('/register', async (req, res) => {
             email,
             password: hashedPassword,
             tier: 'free',
-            profileRole: profile_role || 'Estudiante'
+            profileRole: profile_role || 'Estudiante',
+            university: university || null,
+            lawFirm: law_firm || null,
+            courtSpecialty: court_specialty || null,
+            dni: dni || null,
+            telefono: phone || null,
         }).returning({ insertedId: users.id });
 
         const userId = result[0].insertedId;
@@ -52,7 +56,18 @@ router.post('/register', async (req, res) => {
 
         res.status(201).json({
             message: 'Registro exitoso',
-            user: { id: userId, name, email, tier: 'free', profile_role: profile_role || 'Estudiante' },
+            user: { 
+                id: userId, 
+                name, 
+                email, 
+                tier: 'free', 
+                profile_role: profile_role || 'Estudiante',
+                university: university || null,
+                law_firm: law_firm || null,
+                court_specialty: court_specialty || null,
+                dni: dni || null,
+                telefono: phone || null,
+            },
             token
         });
     } catch (error) {
@@ -66,8 +81,8 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
     
     if (!email || !password) {
-        // Fallback for legacy mocked login (only email was provided in the old frontend)
-        if (email && !password) {
+        // Fallback for legacy mocked login (only email was provided in the old frontend) - ONLY FOR DEVELOPMENT
+        if (email && !password && process.env.NODE_ENV !== 'production') {
             const user = await db.query.users.findFirst({
                 where: (u, { eq }) => eq(u.email, email)
             });
@@ -119,7 +134,18 @@ router.post('/login', async (req, res) => {
 
         res.json({
             message: 'Login exitoso',
-            user: { id: user.id, name: user.name, email: user.email, tier: user.tier, profile_role: user.profileRole },
+            user: { 
+                id: user.id, 
+                name: user.name, 
+                email: user.email, 
+                tier: user.tier, 
+                profile_role: user.profileRole,
+                university: user.university,
+                law_firm: user.lawFirm,
+                court_specialty: user.courtSpecialty,
+                dni: user.dni,
+                telefono: user.telefono
+            },
             token
         });
     } catch (error) {
@@ -146,6 +172,11 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res) => {
                 profileRole: true,
                 totalViews: true,
                 docViewsUsed: true,
+                university: true,
+                lawFirm: true,
+                courtSpecialty: true,
+                dni: true,
+                telefono: true,
             }
         });
         if (!user) {
@@ -153,9 +184,76 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res) => {
             return;
         }
         
-        res.json({ user });
+        res.json({ 
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                tier: user.tier,
+                profile_role: user.profileRole,
+                total_views: user.totalViews,
+                doc_views_used: user.docViewsUsed,
+                university: user.university,
+                law_firm: user.lawFirm,
+                court_specialty: user.courtSpecialty,
+                dni: user.dni,
+                telefono: user.telefono,
+            }
+        });
     } catch (e) {
         res.status(500).json({ error: 'Error interno del servidor.' });
+    }
+});
+
+// --- UPDATE PROFILE ---
+router.put('/me', authMiddleware, async (req: AuthRequest, res) => {
+    if (!req.user) {
+        res.status(401).json({ error: 'No autenticado.' });
+        return;
+    }
+    const { profile_role, university, law_firm, court_specialty, tier } = req.body;
+
+    // Support tier upgrades for payment sandbox/simulation
+    if (tier !== undefined) {
+        if (!['free', 'basic', 'pro', 'admin', 'super_admin'].includes(tier)) {
+            res.status(400).json({ error: 'Plan no válido.' });
+            return;
+        }
+        try {
+            await db.update(users).set({ tier }).where(eq(users.id, req.user.userId));
+            res.json({ success: true });
+            return;
+        } catch (e) {
+            res.status(500).json({ error: 'Error al actualizar el plan.' });
+            return;
+        }
+    }
+
+    if (!profile_role) {
+        res.status(400).json({ error: 'El rol de perfil es obligatorio.' });
+        return;
+    }
+
+    if (['Estudiante', 'Profesor', 'Profesor y Abogado'].includes(profile_role) && (!university || !university.trim())) {
+        res.status(400).json({ error: 'La universidad es obligatoria.' });
+        return;
+    }
+    if (profile_role === 'Juez' && (!court_specialty || !court_specialty.trim())) {
+        res.status(400).json({ error: 'El fuero es obligatorio para jueces.' });
+        return;
+    }
+
+    try {
+        await db.update(users).set({
+            profileRole: profile_role,
+            university: ['Estudiante', 'Profesor', 'Profesor y Abogado'].includes(profile_role) ? university.trim() : null,
+            lawFirm: ['Abogado', 'Profesor y Abogado'].includes(profile_role) ? (law_firm?.trim() || null) : null,
+            courtSpecialty: profile_role === 'Juez' ? court_specialty.trim() : null,
+        }).where(eq(users.id, req.user.userId));
+
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: 'Error al actualizar el perfil.' });
     }
 });
 

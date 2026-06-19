@@ -1,17 +1,7 @@
-import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const dbPath = process.env.DATABASE_PATH || process.env.Database_path || process.env.database_path || path.join(__dirname, 'lexar.sqlite');
-const dbDir = path.dirname(dbPath);
-if (dbDir !== __dirname && !fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-const db = new Database(dbPath);
+import { sqlite as db } from './drizzle.js';
 
 // Initialize DB schema
 function initDb() {
@@ -369,6 +359,14 @@ function initDb() {
     console.log('Added users.password column.');
   }
 
+  // Migration: add is_read to messages
+  try {
+    db.prepare('SELECT is_read FROM messages LIMIT 1').get();
+  } catch {
+    db.exec('ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0');
+    console.log('Added messages.is_read column.');
+  }
+
   // Migration: add source to flashcards if missing
   try {
     db.prepare('SELECT source FROM flashcards LIMIT 1').get();
@@ -543,6 +541,85 @@ function initDb() {
   } catch {
     db.exec("ALTER TABLE legal_movies ADD COLUMN poster_url TEXT");
     console.log('Added legal_movies.poster_url column.');
+  }
+
+  // Migration: add new fields for users
+  try {
+    db.prepare('SELECT university FROM users LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE users ADD COLUMN university TEXT");
+    db.exec("ALTER TABLE users ADD COLUMN law_firm TEXT");
+    db.exec("ALTER TABLE users ADD COLUMN court_specialty TEXT");
+    console.log('Added university, law_firm, court_specialty columns to users.');
+  }
+  try {
+    db.prepare('SELECT dni FROM users LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE users ADD COLUMN dni TEXT");
+    db.exec("ALTER TABLE users ADD COLUMN telefono TEXT");
+    console.log('Added dni, telefono columns to users.');
+  }
+
+  // Migration: add new fields for jobs
+  try {
+    db.prepare('SELECT assistance FROM jobs LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE jobs ADD COLUMN assistance TEXT DEFAULT 'Presencial'");
+    db.exec("ALTER TABLE jobs ADD COLUMN author_id INTEGER REFERENCES users(id)");
+    console.log('Added assistance, author_id columns to jobs.');
+  }
+
+  // Migration: add director and trailer_link to legal_movies
+  try {
+    db.prepare('SELECT director FROM legal_movies LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE legal_movies ADD COLUMN director TEXT");
+    db.exec("ALTER TABLE legal_movies ADD COLUMN trailer_link TEXT");
+    console.log('Added director, trailer_link columns to legal_movies.');
+  }
+
+  // Migration: add vote to resource_votes
+  try {
+    db.prepare('SELECT vote FROM resource_votes LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE resource_votes ADD COLUMN vote INTEGER DEFAULT 1");
+    console.log('Added vote column to resource_votes.');
+  }
+
+  // Migration: add keywords and infoleg_link to normas
+  try {
+    db.prepare('SELECT keywords FROM normas LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE normas ADD COLUMN keywords TEXT");
+    db.exec("ALTER TABLE normas ADD COLUMN infoleg_link TEXT");
+    console.log('Added keywords, infoleg_link columns to normas.');
+  }
+
+  // Migration: add cv_type, cv_link, cv_file_name, cv_file_data to job_applications
+  try {
+    db.prepare('SELECT cv_type FROM job_applications LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE job_applications ADD COLUMN cv_type TEXT");
+    db.exec("ALTER TABLE job_applications ADD COLUMN cv_link TEXT");
+    db.exec("ALTER TABLE job_applications ADD COLUMN cv_file_name TEXT");
+    db.exec("ALTER TABLE job_applications ADD COLUMN cv_file_data TEXT");
+    console.log('Added cv_type, cv_link, cv_file_name, cv_file_data columns to job_applications.');
+  }
+
+  // Migration: add chair_name to student_notes
+  try {
+    db.prepare('SELECT chair_name FROM student_notes LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE student_notes ADD COLUMN chair_name TEXT");
+    console.log('Added chair_name column to student_notes.');
+  }
+
+  // Migration: add professor to student_notes
+  try {
+    db.prepare('SELECT professor FROM student_notes LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE student_notes ADD COLUMN professor TEXT");
+    console.log('Added professor column to student_notes.');
   }
 
   // Seed data if empty

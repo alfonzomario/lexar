@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import path from 'path';
+import fs from 'fs';
 import express from 'express';
 import multer from 'multer';
 import type { Request } from 'express';
@@ -20,6 +21,15 @@ import bcrypt from 'bcrypt';
 import { authRoutes } from './src/backend/routes/auth.routes.js';
 
 async function startServer() {
+  if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+    throw new Error('FATAL: JWT_SECRET environment variable is required in production.');
+  }
+
+  const cvUploadDir = path.join(process.cwd(), 'uploads', 'cv');
+  if (!fs.existsSync(cvUploadDir)) {
+    fs.mkdirSync(cvUploadDir, { recursive: true });
+  }
+
   initNormativaDb();
 
   const app = express();
@@ -31,6 +41,7 @@ async function startServer() {
   const io = new Server(httpServer, {
     cors: { origin: '*' }
   });
+  const onlineUsers = new Map<number, Set<string>>();
 
   app.use(express.json());
   app.use(cookieParser());
@@ -41,14 +52,12 @@ async function startServer() {
     if (token) {
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_development_lexargar') as any;
-        return decoded.userId;
+        return typeof decoded.userId === 'number' ? decoded.userId : null;
       } catch (e) { }
     }
-    const id = req.headers['x-user-id'];
-    if (id === undefined || id === null) return null;
-    const n = parseInt(String(id), 10);
-    return Number.isFinite(n) ? n : null;
+    return null;
   };
+
   const requireSuperAdmin = (req: express.Request, res: express.Response): { userId: number } | null => {
     const userId = getUserId(req);
     if (!userId) {
@@ -145,23 +154,111 @@ async function startServer() {
   const apiRouter = express.Router();
   apiRouter.delete('/notes/:id', (req, res) => {
     if (process.env.NODE_ENV !== 'production') console.log('[API] DELETE /api/notes/' + req.params.id);
-    const auth = requireSuperAdmin(req, res);
-    if (!auth) return;
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
     try {
+      const note = db.prepare('SELECT author_id FROM student_notes WHERE id = ?').get(req.params.id) as { author_id: number } | undefined;
+      if (!note) return res.status(404).json({ error: 'Apunte no encontrado' });
+
+      const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+      const isSuperAdmin = user && user.tier === 'super_admin';
+
+      if (note.author_id !== userId && !isSuperAdmin) {
+        return res.status(403).json({ error: 'No tienes permisos para eliminar este apunte' });
+      }
+
       db.prepare('DELETE FROM student_notes WHERE id = ?').run(req.params.id);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: 'Error al eliminar' });
     }
   });
-  apiRouter.delete('/exams/:id', (req, res) => {
-    const auth = requireSuperAdmin(req, res);
-    if (!auth) return;
+  apiRouter.put('/notes/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
+    const noteId = req.params.id;
     try {
+      const note = db.prepare('SELECT author_id FROM student_notes WHERE id = ?').get(noteId) as { author_id: number } | undefined;
+      if (!note) return res.status(404).json({ error: 'Apunte no encontrado' });
+
+      if (note.author_id !== userId) {
+        return res.status(403).json({ error: 'No tienes permisos para editar este apunte' });
+      }
+
+      const { title, content, file_url, year, chair_name, professor, subject_id, university_id } = req.body;
+      if (!title || !title.trim()) {
+        return res.status(400).json({ error: 'El título es obligatorio' });
+      }
+
+      db.prepare(`
+        UPDATE student_notes
+        SET title = ?, content = ?, file_url = ?, year = ?, chair_name = ?, professor = ?, subject_id = ?, university_id = ?
+        WHERE id = ?
+      `).run(
+        title.trim(), content || null, file_url || null, year || null, chair_name || null, professor || null, 
+        subject_id ? Number(subject_id) : null, university_id ? Number(university_id) : null, noteId
+      );
+
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error updating note:', e);
+      res.status(500).json({ error: 'Error al actualizar el apunte' });
+    }
+  });
+  apiRouter.delete('/exams/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
+    try {
+      const exam = db.prepare('SELECT uploaded_by FROM exams WHERE id = ?').get(req.params.id) as { uploaded_by: number } | undefined;
+      if (!exam) return res.status(404).json({ error: 'Examen no encontrado' });
+
+      const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+      const isSuperAdmin = user && user.tier === 'super_admin';
+
+      if (exam.uploaded_by !== userId && !isSuperAdmin) {
+        return res.status(403).json({ error: 'No tienes permisos para eliminar este examen' });
+      }
+
       db.prepare('DELETE FROM exams WHERE id = ?').run(req.params.id);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: 'Error al eliminar' });
+    }
+  });
+  apiRouter.put('/exams/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
+    const examId = req.params.id;
+    try {
+      const exam = db.prepare('SELECT uploaded_by FROM exams WHERE id = ?').get(examId) as { uploaded_by: number } | undefined;
+      if (!exam) return res.status(404).json({ error: 'Examen no encontrado' });
+
+      if (exam.uploaded_by !== userId) {
+        return res.status(403).json({ error: 'No tienes permisos para editar este examen' });
+      }
+
+      const { title, description, file_url, year, subject_id, university_id } = req.body;
+      if (!title || !title.trim()) {
+        return res.status(400).json({ error: 'El título es obligatorio' });
+      }
+
+      db.prepare(`
+        UPDATE exams
+        SET title = ?, description = ?, file_url = ?, year = ?, subject_id = ?, university_id = ?
+        WHERE id = ?
+      `).run(
+        title.trim(), description || null, file_url || null, year ? Number(year) : null, 
+        subject_id ? Number(subject_id) : null, university_id ? Number(university_id) : null, examId
+      );
+
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error updating exam:', e);
+      res.status(500).json({ error: 'Error al actualizar el examen' });
     }
   });
   app.use('/api', apiRouter);
@@ -368,6 +465,38 @@ async function startServer() {
     }
   });
 
+  // Edit subject (super_admin only)
+  app.put('/api/subjects/:id', (req, res) => {
+    const auth = requireSuperAdmin(req, res);
+    if (!auth) return;
+    const { name, description, icon } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Nombre de materia obligatorio' });
+    }
+    try {
+      db.prepare('UPDATE subjects SET name = ?, description = ?, icon = ? WHERE id = ?').run(
+        name.trim(), description || null, icon || null, req.params.id
+      );
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error updating subject:', e);
+      res.status(500).json({ error: 'Error al actualizar la materia' });
+    }
+  });
+
+  // Delete subject (super_admin only)
+  app.delete('/api/subjects/:id', (req, res) => {
+    const auth = requireSuperAdmin(req, res);
+    if (!auth) return;
+    try {
+      db.prepare('DELETE FROM subjects WHERE id = ?').run(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error deleting subject:', e);
+      res.status(500).json({ error: 'Error al eliminar la materia' });
+    }
+  });
+
   // Subject-scoped: bibliography, notes, exams, flashcards
   app.get('/api/subjects/:id/bibliography', (req, res) => {
     const list = db.prepare('SELECT * FROM bibliographies WHERE subject_id = ?').all(req.params.id);
@@ -383,16 +512,29 @@ async function startServer() {
     const subjectId = req.params.id;
     const universityId = req.query.university_id;
     const uid = userId ?? 0;
-    const voteCountSub = "(SELECT COUNT(*) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
-    const userVotedSub = uid ? `(SELECT 1 FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ${uid})` : '0';
+    const likesSub = "(SELECT COALESCE(SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END), 0) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
+    const dislikesSub = "(SELECT COALESCE(SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END), 0) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
+    
+    const selectParams: any[] = [];
+    let userVoteSub = '0';
+    let isSavedSub = '0';
+    if (uid) {
+      userVoteSub = "COALESCE((SELECT vote FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ?), 0)";
+      isSavedSub = "COALESCE((SELECT 1 FROM saved_for_later WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ?), 0)";
+      selectParams.push(uid, uid);
+    }
 
     let query = `
-      SELECT student_notes.*, users.name as author_name, subjects.name as subject_name,
-        un.name as university_name, ${voteCountSub} as vote_count, ${userVotedSub} as user_voted
+      SELECT student_notes.*, users.name as author_name, users.profile_role as author_role, subjects.name as subject_name,
+        un.name as university_name,
+        COALESCE(student_notes.chair_name, chairs.name) as chair_name,
+        COALESCE(student_notes.professor, chairs.professor) as professor,
+        ${likesSub} as likes_count, ${dislikesSub} as dislikes_count, ${userVoteSub} as user_vote, ${isSavedSub} as is_saved
       FROM student_notes
       JOIN users ON student_notes.author_id = users.id
       JOIN subjects ON student_notes.subject_id = subjects.id
       LEFT JOIN universities un ON student_notes.university_id = un.id
+      LEFT JOIN chairs ON student_notes.chair_id = chairs.id
       WHERE student_notes.subject_id = ?
     `;
     const params: any[] = [subjectId];
@@ -408,7 +550,7 @@ async function startServer() {
 
     query += isSuperAdmin ? ` ORDER BY student_notes.status ASC, student_notes.views DESC` : ` ORDER BY student_notes.views DESC`;
 
-    const notes = db.prepare(query).all(...params);
+    const notes = db.prepare(query).all(...selectParams, ...params);
 
     let filteredNotes = notes;
     if (!canViewProContent(user?.tier)) {
@@ -425,7 +567,13 @@ async function startServer() {
     const universityId = req.query.university_id;
     const uid = userId ?? 0;
     const voteCountSub = "(SELECT COUNT(*) FROM resource_votes WHERE resource_type = 'exam' AND resource_id = exams.id)";
-    const userVotedSub = uid ? `(SELECT 1 FROM resource_votes WHERE resource_type = 'exam' AND resource_id = exams.id AND user_id = ${uid})` : '0';
+    
+    const selectParams: any[] = [];
+    let userVotedSub = '0';
+    if (uid) {
+      userVotedSub = "(SELECT 1 FROM resource_votes WHERE resource_type = 'exam' AND resource_id = exams.id AND user_id = ?)";
+      selectParams.push(uid);
+    }
 
     let query = `
       SELECT exams.*, users.name as uploaded_by_name, un.name as university_name,
@@ -448,7 +596,7 @@ async function startServer() {
 
     query += ` ORDER BY exams.created_at DESC`;
 
-    const examsList = db.prepare(query).all(...params);
+    const examsList = db.prepare(query).all(...selectParams, ...params);
 
     let filteredExams = examsList;
     if (!canViewProContent(user?.tier)) {
@@ -694,8 +842,24 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
   });
 
   // Case Briefs
+  app.get('/api/briefs/filters', (req, res) => {
+    try {
+      const courts = db.prepare("SELECT DISTINCT court FROM case_briefs WHERE court IS NOT NULL AND court != '' ORDER BY court ASC").all() as { court: string }[];
+      const years = db.prepare("SELECT DISTINCT year FROM case_briefs WHERE year IS NOT NULL ORDER BY year DESC").all() as { year: number }[];
+      res.json({
+        courts: courts.map(c => c.court),
+        years: years.map(y => y.year)
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al obtener filtros de fallos' });
+    }
+  });
+
   app.get('/api/briefs', (req, res) => {
-    const { tribunal, year, tema } = req.query;
+    const { tribunal, year, tema, subject_id, page, limit } = req.query;
+    const isPaginated = page !== undefined || limit !== undefined;
+
     let query = `
       SELECT case_briefs.*, GROUP_CONCAT(subjects.name) as subject_names, GROUP_CONCAT(subjects.id) as subject_ids
       FROM case_briefs
@@ -717,14 +881,59 @@ Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (preg
       conditions.push('case_briefs.keywords LIKE ?');
       params.push(`%${tema.trim()}%`);
     }
+    if (subject_id && !isNaN(Number(subject_id))) {
+      conditions.push('case_briefs.id IN (SELECT case_brief_id FROM case_brief_subjects WHERE subject_id = ?)');
+      params.push(Number(subject_id));
+    }
 
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
     query += ' GROUP BY case_briefs.id';
 
-    const briefs = db.prepare(query).all(...params);
-    res.json(briefs);
+    if (isPaginated) {
+      const pageNum = parseInt(page as string, 10) || 1;
+      const limitNum = parseInt(limit as string, 10) || 10;
+      const offsetVal = (pageNum - 1) * limitNum;
+
+      let countQuery = `
+        SELECT COUNT(DISTINCT case_briefs.id) as count
+        FROM case_briefs
+        LEFT JOIN case_brief_subjects ON case_briefs.id = case_brief_subjects.case_brief_id
+        LEFT JOIN subjects ON case_brief_subjects.subject_id = subjects.id
+      `;
+      if (conditions.length > 0) {
+        countQuery += ' WHERE ' + conditions.join(' AND ');
+      }
+
+      try {
+        const totalCountResult = db.prepare(countQuery).get(...params) as { count: number };
+        const totalItems = totalCountResult?.count || 0;
+        const totalPages = Math.ceil(totalItems / limitNum);
+
+        const paginatedQuery = `${query} ORDER BY case_briefs.year DESC, case_briefs.id DESC LIMIT ? OFFSET ?`;
+        const briefs = db.prepare(paginatedQuery).all(...params, limitNum, offsetVal);
+
+        res.json({
+          briefs,
+          totalPages,
+          currentPage: pageNum,
+          totalItems
+        });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Error al buscar fallos paginados' });
+      }
+    } else {
+      try {
+        query += ' ORDER BY case_briefs.year DESC, case_briefs.id DESC';
+        const briefs = db.prepare(query).all(...params);
+        res.json(briefs);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Error al buscar fallos' });
+      }
+    }
   });
 
   app.get('/api/briefs/:id', (req, res) => {
@@ -1066,6 +1275,7 @@ Respondé SOLO con JSON válido:
 
   // Create new Case Brief
   app.post('/api/briefs', (req, res) => {
+    if (!requireSuperAdmin(req, res)) return;
     const { title, facts, issue, rule, reasoning, holding, dissents, relevance, keywords, subject_id, court, year, parties, timeline, citations, full_text } = req.body;
 
     if (!title || !subject_id) {
@@ -1090,6 +1300,7 @@ Respondé SOLO con JSON válido:
 
   // Delete a Case Brief
   app.delete('/api/briefs/:id', (req, res) => {
+    if (!requireSuperAdmin(req, res)) return;
     try {
       db.prepare('DELETE FROM case_brief_subjects WHERE case_brief_id = ?').run(req.params.id);
       db.prepare('DELETE FROM text_annotations WHERE brief_id = ?').run(req.params.id);
@@ -1126,17 +1337,59 @@ Respondé SOLO con JSON válido:
   });
 
   // Submit article
-  app.post('/api/articles', (req, res) => {
+  app.post('/api/articles', upload.single('pdf'), async (req: Request & { file?: Express.Multer.File }, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
     const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
     if (!user || !['basic', 'pro', 'admin', 'super_admin'].includes(user.tier)) {
       return res.status(403).json({ error: 'Esta función requiere plan Basic o superior' });
     }
-    const { title, content } = req.body;
-    if (!title || !content || !title.trim() || !content.trim()) {
-      return res.status(400).json({ error: 'Título y contenido son requeridos' });
+    const { title, driveUrl } = req.body;
+    let { content } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ error: 'El título es requerido' });
     }
+
+    if (driveUrl) {
+      try {
+        const driveRegex = /(?:docs|drive|sheets)\.google\.com\/(?:document|file|spreadsheets|presentation)\/d\/([a-zA-Z0-9_-]+)/;
+        const match = driveUrl.match(driveRegex);
+        if (!match) {
+          return res.status(400).json({ error: 'URL de Google Drive inválida.' });
+        }
+        const docId = match[1];
+        const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
+        const driveRes = await fetch(exportUrl);
+        if (!driveRes.ok) {
+          return res.status(422).json({ error: 'No se pudo acceder al documento de Google Drive. Asegúrate de que tenga permisos de lectura pública (Cualquiera con el enlace).' });
+        }
+        content = await driveRes.text();
+      } catch (err) {
+        console.error('[Google Drive Parse] failed:', err);
+        return res.status(500).json({ error: 'Error al importar el documento de Google Drive.' });
+      }
+    }
+
+    if (req.file) {
+      try {
+        const parser = new PDFParse({ data: req.file.buffer });
+        const pdfResult = await parser.getText();
+        await parser.destroy();
+        content = pdfResult.text?.trim() || '';
+        if (!content || content.length < 10) {
+          return res.status(422).json({ error: 'No se pudo extraer texto del PDF o es demasiado corto.' });
+        }
+      } catch (pdfErr) {
+        console.error('[PDF Parse Article] failed:', pdfErr);
+        return res.status(500).json({ error: 'Error al procesar el archivo PDF.' });
+      }
+    }
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'El contenido es requerido.' });
+    }
+
     try {
       const now = new Date().toISOString();
       const result = db.prepare(`
@@ -1145,6 +1398,7 @@ Respondé SOLO con JSON válido:
       `).run(title.trim(), content.trim(), userId, now);
       res.status(201).json({ success: true, id: result.lastInsertRowid });
     } catch (e) {
+      console.error('Error inserting article:', e);
       res.status(500).json({ error: 'Error al enviar el artículo' });
     }
   });
@@ -1220,6 +1474,37 @@ Respondé SOLO con JSON válido:
     `).run(name || null, description || null, city || null, province || null, type || null, program_url || null, req.params.id);
     const updated = db.prepare('SELECT * FROM universities WHERE id = ?').get(req.params.id);
     res.json(updated);
+  });
+
+  // Create university (super_admin only)
+  app.post('/api/universities', (req, res) => {
+    const auth = requireSuperAdmin(req, res);
+    if (!auth) return;
+    const { name, description, city, province, type, program_url } = req.body;
+    if (!name || !type) return res.status(400).json({ error: 'Nombre y tipo obligatorios' });
+    try {
+      const result = db.prepare(`
+        INSERT INTO universities (name, description, city, province, type, program_url)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(name.trim(), description || null, city || null, province || null, type, program_url || null);
+      res.status(201).json({ success: true, id: result.lastInsertRowid });
+    } catch (e) {
+      console.error('Error creating university:', e);
+      res.status(500).json({ error: 'Error al crear universidad' });
+    }
+  });
+
+  // Delete university (super_admin only)
+  app.delete('/api/universities/:id', (req, res) => {
+    const auth = requireSuperAdmin(req, res);
+    if (!auth) return;
+    try {
+      db.prepare('DELETE FROM universities WHERE id = ?').run(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error deleting university:', e);
+      res.status(500).json({ error: 'Error al eliminar universidad' });
+    }
   });
 
   // Get study plan for a university
@@ -1340,24 +1625,97 @@ Respondé SOLO con JSON válido:
     res.json({ modifica: asOrigin, modificada_por: asDestino });
   });
 
+  // Brief relations scan for a law
+  app.get('/api/normas/:id/brief-relations', (req, res) => {
+    const normaId = req.params.id;
+    const norma = db.prepare('SELECT tipo, numero, titulo FROM normas WHERE id = ?').get(normaId) as { tipo: string; numero: string; titulo: string } | undefined;
+    if (!norma) return res.status(404).json({ error: 'Norma no encontrada' });
+
+    try {
+      const briefs = db.prepare('SELECT id, title, citations, holding, relevance FROM case_briefs').all() as any[];
+      const relations: any[] = [];
+
+      const rawNum = norma.numero ? String(norma.numero).replace(/\./g, '') : '';
+      const formattedNum = norma.numero ? String(norma.numero) : '';
+
+      if (rawNum || formattedNum) {
+        briefs.forEach(brief => {
+          const textToSearch = `${brief.title} ${brief.citations || ''} ${brief.holding || ''} ${brief.relevance || ''}`.toLowerCase();
+          const citesLaw = (rawNum && textToSearch.includes(rawNum.toLowerCase())) || 
+                            (formattedNum && textToSearch.includes(formattedNum.toLowerCase())) ||
+                            (norma.titulo && textToSearch.includes(norma.titulo.toLowerCase()));
+
+          if (citesLaw) {
+            let articleNum = 'General';
+            const citationsField = brief.citations || '';
+            const artMatch = citationsField.match(/Art(?:\.|ículo)\s*(\d+)/i);
+            if (artMatch) {
+              articleNum = `Art. ${artMatch[1]}`;
+            }
+
+            relations.push({
+              brief_id: brief.id,
+              brief_title: brief.title,
+              article_number: articleNum,
+              context: brief.relevance || 'Cita de doctrina/jurisprudencia'
+            });
+          }
+        });
+      }
+
+      res.json(relations);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al buscar relaciones con fallos' });
+    }
+  });
+
   // Forum Topics
   app.get('/api/forum/topics', (req, res) => {
     const category = req.query.category;
-    let query = `
-      SELECT ft.*, u.name as author_name, u.profile_role as author_role, s.name as subject_name,
-        (SELECT COUNT(*) FROM forum_replies WHERE topic_id = ft.id) as reply_count
+    const page = parseInt(req.query.page as string, 10) || 1;
+    const limit = parseInt(req.query.limit as string, 10) || 10;
+    const offset = (page - 1) * limit;
+
+    let baseQuery = `
       FROM forum_topics ft
       JOIN users u ON ft.author_id = u.id
       LEFT JOIN subjects s ON ft.subject_id = s.id
     `;
     const params: any[] = [];
+    let whereClause = '';
     if (category && typeof category === 'string' && category !== 'all') {
-      query += ' WHERE ft.category = ?';
+      whereClause = ' WHERE ft.category = ?';
       params.push(category);
     }
-    query += ' ORDER BY ft.pinned DESC, ft.updated_at DESC';
-    const topics = db.prepare(query).all(...params);
-    res.json(topics);
+
+    try {
+      const countQuery = `SELECT COUNT(*) as count ${baseQuery} ${whereClause}`;
+      const totalCountResult = db.prepare(countQuery).get(...params) as { count: number };
+      const totalItems = totalCountResult?.count || 0;
+      const totalPages = Math.ceil(totalItems / limit);
+
+      let selectQuery = `
+        SELECT ft.*, u.name as author_name, u.profile_role as author_role, s.name as subject_name,
+          (SELECT COUNT(*) FROM forum_replies WHERE topic_id = ft.id) as reply_count
+        ${baseQuery}
+        ${whereClause}
+        ORDER BY ft.pinned DESC, ft.updated_at DESC
+        LIMIT ? OFFSET ?
+      `;
+      const selectParams = [...params, limit, offset];
+      const topics = db.prepare(selectQuery).all(...selectParams);
+
+      res.json({
+        topics,
+        totalPages,
+        currentPage: page,
+        totalItems
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al buscar temas del foro' });
+    }
   });
 
   app.get('/api/forum/topics/:id', (req, res) => {
@@ -1425,6 +1783,108 @@ Respondé SOLO con JSON válido:
     }
   });
 
+  // Edit forum topic
+  app.put('/api/forum/topics/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+    const { title, content } = req.body;
+    if (!title || !title.trim() || !content || !content.trim()) {
+      return res.status(400).json({ error: 'Título y contenido obligatorios' });
+    }
+
+    try {
+      const topic = db.prepare('SELECT author_id FROM forum_topics WHERE id = ?').get(req.params.id) as { author_id: number } | undefined;
+      if (!topic) return res.status(404).json({ error: 'Tema no encontrado' });
+
+      if (topic.author_id !== userId) {
+        return res.status(403).json({ error: 'No tienes permisos para editar este tema' });
+      }
+
+      const now = new Date().toISOString();
+      db.prepare('UPDATE forum_topics SET title = ?, content = ?, updated_at = ? WHERE id = ?').run(
+        title.trim(), content.trim(), now, req.params.id
+      );
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al actualizar el tema' });
+    }
+  });
+
+  // Delete forum topic
+  app.delete('/api/forum/topics/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
+    try {
+      const topic = db.prepare('SELECT author_id FROM forum_topics WHERE id = ?').get(req.params.id) as { author_id: number } | undefined;
+      if (!topic) return res.status(404).json({ error: 'Tema no encontrado' });
+
+      const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+      const isSuperAdmin = user && user.tier === 'super_admin';
+
+      if (topic.author_id !== userId && !isSuperAdmin) {
+        return res.status(403).json({ error: 'No tienes permisos para eliminar este tema' });
+      }
+
+      db.prepare('DELETE FROM forum_replies WHERE topic_id = ?').run(req.params.id);
+      db.prepare('DELETE FROM forum_topics WHERE id = ?').run(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al eliminar el tema' });
+    }
+  });
+
+  // Edit forum reply
+  app.put('/api/forum/replies/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+    const { content } = req.body;
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'Contenido obligatorio' });
+    }
+
+    try {
+      const reply = db.prepare('SELECT author_id, topic_id FROM forum_replies WHERE id = ?').get(req.params.id) as { author_id: number, topic_id: number } | undefined;
+      if (!reply) return res.status(404).json({ error: 'Respuesta no encontrada' });
+
+      if (reply.author_id !== userId) {
+        return res.status(403).json({ error: 'No tienes permisos para editar esta respuesta' });
+      }
+
+      db.prepare('UPDATE forum_replies SET content = ? WHERE id = ?').run(content.trim(), req.params.id);
+      const now = new Date().toISOString();
+      db.prepare('UPDATE forum_topics SET updated_at = ? WHERE id = ?').run(now, reply.topic_id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al actualizar la respuesta' });
+    }
+  });
+
+  // Delete forum reply
+  app.delete('/api/forum/replies/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
+    try {
+      const reply = db.prepare('SELECT author_id, topic_id FROM forum_replies WHERE id = ?').get(req.params.id) as { author_id: number, topic_id: number } | undefined;
+      if (!reply) return res.status(404).json({ error: 'Respuesta no encontrada' });
+
+      const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+      const isSuperAdmin = user && user.tier === 'super_admin';
+
+      if (reply.author_id !== userId && !isSuperAdmin) {
+        return res.status(403).json({ error: 'No tienes permisos para eliminar esta respuesta' });
+      }
+
+      db.prepare('DELETE FROM forum_replies WHERE id = ?').run(req.params.id);
+      const now = new Date().toISOString();
+      db.prepare('UPDATE forum_topics SET updated_at = ? WHERE id = ?').run(now, reply.topic_id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al eliminar la respuesta' });
+    }
+  });
+
   // Comments (for universities, notes, etc.)
   app.get('/api/comments/:resourceType/:resourceId', (req, res) => {
     const { resourceType, resourceId } = req.params;
@@ -1456,6 +1916,51 @@ Respondé SOLO con JSON válido:
     }
   });
 
+  app.delete('/api/comments/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+
+    try {
+      const comment = db.prepare('SELECT user_id FROM comments WHERE id = ?').get(req.params.id) as { user_id: number } | undefined;
+      if (!comment) return res.status(404).json({ error: 'Comentario no encontrado' });
+
+      const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+      const isSuperAdmin = user && user.tier === 'super_admin';
+
+      if (comment.user_id !== userId && !isSuperAdmin) {
+        return res.status(403).json({ error: 'No tienes permisos para borrar este comentario' });
+      }
+
+      db.prepare('DELETE FROM comments WHERE id = ?').run(req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al borrar el comentario' });
+    }
+  });
+
+  app.put('/api/comments/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const { content } = req.body;
+    if (!content || typeof content !== 'string' || !content.trim()) {
+      return res.status(400).json({ error: 'Contenido obligatorio' });
+    }
+
+    try {
+      const comment = db.prepare('SELECT user_id FROM comments WHERE id = ?').get(req.params.id) as { user_id: number } | undefined;
+      if (!comment) return res.status(404).json({ error: 'Comentario no encontrado' });
+
+      if (comment.user_id !== userId) {
+        return res.status(403).json({ error: 'No tienes permisos para editar este comentario' });
+      }
+
+      db.prepare('UPDATE comments SET content = ? WHERE id = ?').run(content.trim(), req.params.id);
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Error al editar el comentario' });
+    }
+  });
+
   // Bibliography
   app.get('/api/bibliography', (req, res) => {
     const biblio = db.prepare('SELECT * FROM bibliographies').all();
@@ -1474,12 +1979,12 @@ Respondé SOLO con JSON válido:
       res.status(403).json({ error: 'La Bolsa de Trabajo es exclusiva del plan Pro' });
       return;
     }
-    const jobs = db.prepare('SELECT * FROM jobs ORDER BY date DESC').all();
+    const jobs = db.prepare('SELECT id, title, firm AS company, location, type, description, date, assistance, author_id FROM jobs ORDER BY date DESC').all();
     res.json(jobs);
   });
 
   // Apply to a job (solo Pro y super_admin)
-  app.post('/api/jobs/:id/apply', (req, res) => {
+  app.post('/api/jobs/:id/apply', upload.single('cv'), (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
     const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
@@ -1487,21 +1992,226 @@ Respondé SOLO con JSON válido:
       return res.status(403).json({ error: 'La Bolsa de Trabajo es exclusiva del plan Pro' });
     }
     const jobId = Number(req.params.id);
-    const { coverLetter } = req.body;
+    const { coverLetter, cvType, cvLink, cvFileName } = req.body;
     if (!coverLetter || !coverLetter.trim()) {
       return res.status(400).json({ error: 'La carta de presentación es requerida' });
     }
+    if (!cvType) {
+      return res.status(400).json({ error: 'El tipo de CV es requerido' });
+    }
+
+    let cvFileDiskName: string | null = null;
+    let finalCvFileName: string | null = cvFileName || null;
+
+    if (cvType === 'drive') {
+      if (!cvLink || !cvLink.trim()) {
+        return res.status(400).json({ error: 'El enlace de Google Drive es obligatorio' });
+      }
+    } else if (cvType === 'pdf') {
+      if (!req.file) {
+        return res.status(400).json({ error: 'El archivo PDF es obligatorio' });
+      }
+      if (req.file.mimetype !== 'application/pdf') {
+        return res.status(400).json({ error: 'El archivo debe ser estrictamente en formato PDF' });
+      }
+      
+      try {
+        const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+        cvFileDiskName = `${uniqueSuffix}.pdf`;
+        const destPath = path.join(process.cwd(), 'uploads', 'cv', cvFileDiskName);
+        fs.writeFileSync(destPath, req.file.buffer);
+        if (!finalCvFileName) {
+          finalCvFileName = req.file.originalname;
+        }
+      } catch (err) {
+        console.error('Error writing PDF file:', err);
+        return res.status(500).json({ error: 'Error al procesar el archivo PDF' });
+      }
+    } else {
+      return res.status(400).json({ error: 'Tipo de CV no soportado' });
+    }
+
     try {
       // Check if already applied
       const existing = db.prepare('SELECT id FROM job_applications WHERE job_id = ? AND user_id = ?').get(jobId, userId);
       if (existing) {
+        if (cvFileDiskName) {
+          try {
+            fs.unlinkSync(path.join(process.cwd(), 'uploads', 'cv', cvFileDiskName));
+          } catch (err) {}
+        }
         return res.status(400).json({ error: 'Ya te has postulado a este puesto' });
       }
       const now = new Date().toISOString();
-      db.prepare('INSERT INTO job_applications (job_id, user_id, cover_letter, created_at) VALUES (?, ?, ?, ?)').run(jobId, userId, coverLetter.trim(), now);
+      db.prepare(`
+        INSERT INTO job_applications (job_id, user_id, cover_letter, cv_type, cv_link, cv_file_name, cv_file_data, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(jobId, userId, coverLetter.trim(), cvType, cvLink || null, finalCvFileName, cvFileDiskName, now);
       res.json({ success: true });
     } catch (e) {
+      console.error(e);
+      if (cvFileDiskName) {
+        try {
+          fs.unlinkSync(path.join(process.cwd(), 'uploads', 'cv', cvFileDiskName));
+        } catch (err) {}
+      }
       res.status(500).json({ error: 'Error al enviar la postulación' });
+    }
+  });
+
+  // Download CV for job application (applicant, recruiter, or super admin only)
+  app.get('/api/jobs/applications/:id/download-cv', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+
+    const appId = Number(req.params.id);
+    const application = db.prepare(`
+      SELECT ja.*, j.author_id as job_author_id
+      FROM job_applications ja
+      JOIN jobs j ON ja.job_id = j.id
+      WHERE ja.id = ?
+    `).get(appId) as any;
+
+    if (!application) {
+      return res.status(404).json({ error: 'Postulación no encontrada' });
+    }
+
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    if (application.user_id !== userId && application.job_author_id !== userId && user?.tier !== 'super_admin') {
+      return res.status(403).json({ error: 'No tienes permisos para descargar este currículum' });
+    }
+
+    if (application.cv_type !== 'pdf' || !application.cv_file_data) {
+      return res.status(400).json({ error: 'Esta postulación no contiene un archivo PDF' });
+    }
+
+    const filePath = path.join(process.cwd(), 'uploads', 'cv', application.cv_file_data);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Archivo currículum no encontrado en el servidor' });
+    }
+
+    res.download(filePath, application.cv_file_name || 'curriculum.pdf', (err) => {
+      if (err) {
+        console.error('Error downloading file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Error al descargar el archivo' });
+        }
+      }
+    });
+  });
+
+  // Create a new job posting (recruiter only - Pro or super_admin)
+  app.post('/api/jobs', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    if (!user || (user.tier !== 'pro' && user.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'La Bolsa de Trabajo es exclusiva del plan Pro' });
+    }
+
+    const { title, company, location, type, description, assistance } = req.body;
+    if (!title || !company || !location || !type || !description) {
+      return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+    }
+
+    const date = new Date().toISOString().split('T')[0];
+    try {
+      const result = db.prepare(`
+        INSERT INTO jobs (title, firm, location, type, description, date, assistance, author_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(title.trim(), company.trim(), location.trim(), type.trim(), description.trim(), date, assistance || 'Presencial', userId);
+      
+      res.status(201).json({ success: true, id: result.lastInsertRowid });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al crear la oferta de empleo' });
+    }
+  });
+
+  // Edit job posting
+  app.put('/api/jobs/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+
+    const jobId = Number(req.params.id);
+    const job = db.prepare('SELECT author_id FROM jobs WHERE id = ?').get(jobId) as { author_id: number } | undefined;
+    if (!job) return res.status(404).json({ error: 'Oferta de empleo no encontrada' });
+
+    if (job.author_id !== userId) {
+      return res.status(403).json({ error: 'No tienes permisos para editar esta oferta' });
+    }
+
+    const { title, company, location, type, description, assistance } = req.body;
+    if (!title || !company || !location || !type || !description) {
+      return res.status(400).json({ error: 'Todos los campos obligatorios' });
+    }
+
+    try {
+      db.prepare(`
+        UPDATE jobs
+        SET title = ?, firm = ?, location = ?, type = ?, description = ?, assistance = ?
+        WHERE id = ?
+      `).run(title.trim(), company.trim(), location.trim(), type.trim(), description.trim(), assistance || 'Presencial', jobId);
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al actualizar la oferta de empleo' });
+    }
+  });
+
+  // Delete job posting
+  app.delete('/api/jobs/:id', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+
+    const jobId = Number(req.params.id);
+    const job = db.prepare('SELECT author_id FROM jobs WHERE id = ?').get(jobId) as { author_id: number } | undefined;
+    if (!job) return res.status(404).json({ error: 'Oferta de empleo no encontrada' });
+
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    const isSuperAdmin = user && user.tier === 'super_admin';
+
+    if (job.author_id !== userId && !isSuperAdmin) {
+      return res.status(403).json({ error: 'No tienes permisos para eliminar esta oferta' });
+    }
+
+    try {
+      db.prepare('DELETE FROM job_applications WHERE job_id = ?').run(jobId);
+      db.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al eliminar la oferta de empleo' });
+    }
+  });
+
+  // Get applications for a specific job (recruiter only)
+  app.get('/api/jobs/:id/applications', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    
+    const jobId = Number(req.params.id);
+    const job = db.prepare('SELECT author_id FROM jobs WHERE id = ?').get(jobId) as { author_id: number } | undefined;
+    if (!job) return res.status(404).json({ error: 'Trabajo no encontrado' });
+
+    // Guard: Only the creator of the job or super admin can see applications
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    if (job.author_id !== userId && user?.tier !== 'super_admin') {
+      return res.status(403).json({ error: 'No tienes permiso para ver estas postulaciones' });
+    }
+
+    try {
+      const apps = db.prepare(`
+        SELECT ja.*, u.name as user_name, u.email as user_email, u.telefono as user_phone, u.university as user_university
+        FROM job_applications ja
+        JOIN users u ON ja.user_id = u.id
+        WHERE ja.job_id = ?
+        ORDER BY ja.created_at DESC
+      `).all(jobId);
+      res.json(apps);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al obtener las postulaciones' });
     }
   });
 
@@ -1542,26 +2252,228 @@ Respondé SOLO con JSON válido:
   app.get('/api/saved-for-later', (req, res) => {
     const userId = requireBasicOrAbove(req, res);
     if (userId === null) return;
-    const rows = db.prepare('SELECT resource_type, resource_id, created_at FROM saved_for_later WHERE user_id = ? ORDER BY created_at DESC').all(userId) as { resource_type: string; resource_id: number; created_at: string }[];
-    const out = rows.map((r) => {
-      let title = '';
-      let url = '';
-      if (r.resource_type === 'brief') {
-        const b = db.prepare('SELECT title FROM case_briefs WHERE id = ?').get(r.resource_id) as { title: string } | undefined;
-        title = b?.title || 'Fallos';
-        url = `/briefs/${r.resource_id}`;
-      } else if (r.resource_type === 'note') {
-        const n = db.prepare('SELECT title, subject_id FROM student_notes WHERE id = ?').get(r.resource_id) as { title: string; subject_id: number } | undefined;
-        title = n?.title || 'Apunte';
-        url = n ? `/subjects/${n.subject_id}` : '/subjects';
-      } else if (r.resource_type === 'exam') {
-        const e = db.prepare('SELECT title, subject_id FROM exams WHERE id = ?').get(r.resource_id) as { title: string; subject_id: number } | undefined;
-        title = e?.title || 'Examen';
-        url = e ? `/subjects/${e.subject_id}` : '/subjects';
+
+    const resourceType = req.query.resource_type;
+    const page = req.query.page;
+    const limit = req.query.limit;
+    const isPaginated = page !== undefined || limit !== undefined;
+
+    let baseQuery = 'FROM saved_for_later WHERE user_id = ?';
+    const params: any[] = [userId];
+
+    if (resourceType && typeof resourceType === 'string' && resourceType !== 'all') {
+      baseQuery += ' AND resource_type = ?';
+      params.push(resourceType);
+    }
+
+    if (isPaginated) {
+      const pageNum = parseInt(page as string, 10) || 1;
+      const limitNum = parseInt(limit as string, 10) || 6;
+      const offsetVal = (pageNum - 1) * limitNum;
+
+      try {
+        const countQuery = `SELECT COUNT(*) as count ${baseQuery}`;
+        const totalCountResult = db.prepare(countQuery).get(...params) as { count: number };
+        const totalItems = totalCountResult?.count || 0;
+        const totalPages = Math.ceil(totalItems / limitNum);
+
+        const selectQuery = `SELECT resource_type, resource_id, created_at ${baseQuery} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+        const rows = db.prepare(selectQuery).all(...params, limitNum, offsetVal) as { resource_type: string; resource_id: number; created_at: string }[];
+
+        const out = rows.map((r) => {
+          let details: any = null;
+          let title = '';
+          let url = '';
+
+          try {
+            if (r.resource_type === 'brief') {
+              const b = db.prepare('SELECT * FROM case_briefs WHERE id = ?').get(r.resource_id) as any;
+              if (b) {
+                title = b.title;
+                url = `/briefs/${r.resource_id}`;
+                details = b;
+              }
+            } else if (r.resource_type === 'note') {
+              const likesSub = "(SELECT COALESCE(SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END), 0) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
+              const dislikesSub = "(SELECT COALESCE(SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END), 0) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
+              
+              const selectParams: any[] = [];
+              let userVoteSub = '0';
+              if (userId) {
+                userVoteSub = "COALESCE((SELECT vote FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ?), 0)";
+                selectParams.push(userId);
+              }
+              const isSavedSub = '1';
+
+              const n = db.prepare(`
+                SELECT student_notes.*, users.name as author_name, users.profile_role as author_role, subjects.name as subject_name,
+                  un.name as university_name,
+                  COALESCE(student_notes.chair_name, chairs.name) as chair_name,
+                  COALESCE(student_notes.professor, chairs.professor) as professor,
+                  ${likesSub} as likes_count, ${dislikesSub} as dislikes_count, ${userVoteSub} as user_vote, ${isSavedSub} as is_saved
+                FROM student_notes
+                JOIN users ON student_notes.author_id = users.id
+                JOIN subjects ON student_notes.subject_id = subjects.id
+                LEFT JOIN universities un ON student_notes.university_id = un.id
+                LEFT JOIN chairs ON student_notes.chair_id = chairs.id
+                WHERE student_notes.id = ?
+              `).get(...selectParams, r.resource_id) as any;
+              if (n) {
+                title = n.title;
+                url = `/subjects/${n.subject_id}`;
+                details = n;
+              }
+            } else if (r.resource_type === 'exam') {
+              const e = db.prepare('SELECT exams.*, subjects.name as subject_name, un.name as university_name FROM exams JOIN subjects ON exams.subject_id = subjects.id LEFT JOIN universities un ON exams.university_id = un.id WHERE exams.id = ?').get(r.resource_id) as any;
+              if (e) {
+                title = e.title;
+                url = `/subjects/${e.subject_id}`;
+                details = e;
+              }
+            } else if (r.resource_type === 'norma') {
+              const n = db.prepare('SELECT * FROM normas WHERE id = ?').get(r.resource_id) as any;
+              if (n) {
+                title = n.titulo;
+                url = `/normativa/${r.resource_id}`;
+                details = n;
+              }
+            } else if (r.resource_type === 'latinism') {
+              const l = db.prepare('SELECT * FROM latinisms WHERE id = ?').get(r.resource_id) as any;
+              if (l) {
+                title = l.term;
+                url = `/latinisms`;
+                details = l;
+              }
+            } else if (r.resource_type === 'article') {
+              const a = db.prepare(`
+                SELECT articles.*, users.name as author_name, users.profile_role as author_role
+                FROM articles
+                JOIN users ON articles.author_id = users.id
+                WHERE articles.id = ?
+              `).get(r.resource_id) as any;
+              if (a) {
+                title = a.title;
+                url = `/articles`;
+                details = a;
+              }
+            }
+          } catch (err) {
+            console.error('Error fetching details in saved-for-later:', err);
+          }
+
+          return { ...r, title, url, details };
+        }).filter(item => item.details !== null);
+
+        const countsRows = db.prepare('SELECT resource_type, COUNT(*) as count FROM saved_for_later WHERE user_id = ? GROUP BY resource_type').all(userId) as { resource_type: string; count: number }[];
+        const counts: Record<string, number> = { brief: 0, norma: 0, note: 0, latinism: 0, article: 0 };
+        countsRows.forEach(row => {
+          counts[row.resource_type] = row.count;
+        });
+
+        res.json({
+          items: out,
+          totalPages,
+          currentPage: pageNum,
+          totalItems,
+          counts
+        });
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Error al buscar elementos guardados' });
       }
-      return { ...r, title, url };
-    });
-    res.json(out);
+    } else {
+      try {
+        const rows = db.prepare(`SELECT resource_type, resource_id, created_at ${baseQuery} ORDER BY created_at DESC`).all(...params) as { resource_type: string; resource_id: number; created_at: string }[];
+        const out = rows.map((r) => {
+          let details: any = null;
+          let title = '';
+          let url = '';
+
+          try {
+            if (r.resource_type === 'brief') {
+              const b = db.prepare('SELECT * FROM case_briefs WHERE id = ?').get(r.resource_id) as any;
+              if (b) {
+                title = b.title;
+                url = `/briefs/${r.resource_id}`;
+                details = b;
+              }
+            } else if (r.resource_type === 'note') {
+              const likesSub = "(SELECT COALESCE(SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END), 0) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
+              const dislikesSub = "(SELECT COALESCE(SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END), 0) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
+              
+              const selectParams: any[] = [];
+              let userVoteSub = '0';
+              if (userId) {
+                userVoteSub = "COALESCE((SELECT vote FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ?), 0)";
+                selectParams.push(userId);
+              }
+              const isSavedSub = '1';
+
+              const n = db.prepare(`
+                SELECT student_notes.*, users.name as author_name, users.profile_role as author_role, subjects.name as subject_name,
+                  un.name as university_name,
+                  COALESCE(student_notes.chair_name, chairs.name) as chair_name,
+                  COALESCE(student_notes.professor, chairs.professor) as professor,
+                  ${likesSub} as likes_count, ${dislikesSub} as dislikes_count, ${userVoteSub} as user_vote, ${isSavedSub} as is_saved
+                FROM student_notes
+                JOIN users ON student_notes.author_id = users.id
+                JOIN subjects ON student_notes.subject_id = subjects.id
+                LEFT JOIN universities un ON student_notes.university_id = un.id
+                LEFT JOIN chairs ON student_notes.chair_id = chairs.id
+                WHERE student_notes.id = ?
+              `).get(...selectParams, r.resource_id) as any;
+              if (n) {
+                title = n.title;
+                url = `/subjects/${n.subject_id}`;
+                details = n;
+              }
+            } else if (r.resource_type === 'exam') {
+              const e = db.prepare('SELECT exams.*, subjects.name as subject_name, un.name as university_name FROM exams JOIN subjects ON exams.subject_id = subjects.id LEFT JOIN universities un ON exams.university_id = un.id WHERE exams.id = ?').get(r.resource_id) as any;
+              if (e) {
+                title = e.title;
+                url = `/subjects/${e.subject_id}`;
+                details = e;
+              }
+            } else if (r.resource_type === 'norma') {
+              const n = db.prepare('SELECT * FROM normas WHERE id = ?').get(r.resource_id) as any;
+              if (n) {
+                title = n.titulo;
+                url = `/normativa/${r.resource_id}`;
+                details = n;
+              }
+            } else if (r.resource_type === 'latinism') {
+              const l = db.prepare('SELECT * FROM latinisms WHERE id = ?').get(r.resource_id) as any;
+              if (l) {
+                title = l.term;
+                url = `/latinisms`;
+                details = l;
+              }
+            } else if (r.resource_type === 'article') {
+              const a = db.prepare(`
+                SELECT articles.*, users.name as author_name, users.profile_role as author_role
+                FROM articles
+                JOIN users ON articles.author_id = users.id
+                WHERE articles.id = ?
+              `).get(r.resource_id) as any;
+              if (a) {
+                title = a.title;
+                url = `/articles`;
+                details = a;
+              }
+            }
+          } catch (err) {
+            console.error('Error fetching details in saved-for-later:', err);
+          }
+
+          return { ...r, title, url, details };
+        }).filter(item => item.details !== null);
+
+        res.json(out);
+      } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Error al buscar elementos guardados' });
+      }
+    }
   });
   app.post('/api/saved-for-later', (req, res) => {
     const userId = requireBasicOrAbove(req, res);
@@ -1643,11 +2555,30 @@ Respondé SOLO con JSON válido:
 
   // Student Notes
   app.get('/api/notes', (req, res) => {
+    const userId = getUserId(req) || 0;
     const { subject_id, university_id, year: yearParam } = req.query;
+
+    const likesSub = "(SELECT COALESCE(SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END), 0) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
+    const dislikesSub = "(SELECT COALESCE(SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END), 0) FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id)";
+    
+    const selectParams: any[] = [];
+    let userVoteSub = '0';
+    let isSavedSub = '0';
+    if (userId) {
+      userVoteSub = "COALESCE((SELECT vote FROM resource_votes WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ?), 0)";
+      isSavedSub = "COALESCE((SELECT 1 FROM saved_for_later WHERE resource_type = 'note' AND resource_id = student_notes.id AND user_id = ?), 0)";
+      selectParams.push(userId, userId);
+    }
+
     let query = `
-      SELECT student_notes.*, users.name as author_name, subjects.name as subject_name,
+      SELECT student_notes.*, users.name as author_name, users.profile_role as author_role, subjects.name as subject_name,
         universities.name as university_name,
-        chairs.name as chair_name, chairs.professor as professor
+        COALESCE(student_notes.chair_name, chairs.name) as chair_name,
+        COALESCE(student_notes.professor, chairs.professor) as professor,
+        ${likesSub} as likes_count,
+        ${dislikesSub} as dislikes_count,
+        ${userVoteSub} as user_vote,
+        ${isSavedSub} as is_saved
       FROM student_notes 
       JOIN users ON student_notes.author_id = users.id
       JOIN subjects ON student_notes.subject_id = subjects.id
@@ -1664,12 +2595,12 @@ Respondé SOLO con JSON válido:
       query += ' AND student_notes.university_id = ?';
       params.push(Number(university_id));
     }
-    if (yearParam && !isNaN(Number(yearParam))) {
+    if (yearParam) {
       query += ' AND student_notes.year = ?';
-      params.push(Number(yearParam));
+      params.push(yearParam);
     }
     query += ' ORDER BY student_notes.views DESC';
-    const notes = db.prepare(query).all(...params);
+    const notes = db.prepare(query).all(...selectParams, ...params);
     res.json(notes);
   });
 
@@ -1710,6 +2641,15 @@ Respondé SOLO con JSON válido:
     res.json({ success: true });
   });
 
+  const getLikesCount = (noteId: string | number) => {
+    const r = db.prepare("SELECT COALESCE(SUM(CASE WHEN vote = 1 THEN 1 ELSE 0 END), 0) as count FROM resource_votes WHERE resource_type = 'note' AND resource_id = ?").get(noteId) as { count: number } | undefined;
+    return r?.count || 0;
+  };
+  const getDislikesCount = (noteId: string | number) => {
+    const r = db.prepare("SELECT COALESCE(SUM(CASE WHEN vote = -1 THEN 1 ELSE 0 END), 0) as count FROM resource_votes WHERE resource_type = 'note' AND resource_id = ?").get(noteId) as { count: number } | undefined;
+    return r?.count || 0;
+  };
+
   app.post('/api/notes/:id/vote', (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Usuario no identificado' });
@@ -1717,14 +2657,41 @@ Respondé SOLO con JSON válido:
     const note = db.prepare('SELECT id, author_id, status FROM student_notes WHERE id = ?').get(noteId) as { id: number; author_id: number; status: string } | undefined;
     if (!note) return res.status(404).json({ error: 'Not found' });
     if (note.status !== 'published') return res.status(400).json({ error: 'Solo se puede votar apuntes publicados' });
+    
+    const { vote } = req.body;
+    const voteVal = Number(vote);
+    if (voteVal !== 1 && voteVal !== -1) {
+      return res.status(400).json({ error: 'Valor de voto inválido (debe ser 1 o -1)' });
+    }
+
     const createdAt = new Date().toISOString();
     try {
-      const r = db.prepare('INSERT OR IGNORE INTO resource_votes (user_id, resource_type, resource_id, created_at) VALUES (?, ?, ?, ?)').run(userId, 'note', noteId, createdAt);
-      if (r.changes === 0) return res.json({ success: true, already_voted: true });
-      db.prepare('UPDATE users SET total_votes_received = COALESCE(total_votes_received, 0) + 1 WHERE id = ?').run(note.author_id);
-      applyImpactTierUpgrade(note.author_id);
-      res.json({ success: true });
+      const existing = db.prepare('SELECT vote FROM resource_votes WHERE user_id = ? AND resource_type = ? AND resource_id = ?').get(userId, 'note', noteId) as { vote: number } | undefined;
+
+      if (existing) {
+        if (existing.vote === voteVal) {
+          // Toggle off: remove vote
+          db.prepare('DELETE FROM resource_votes WHERE user_id = ? AND resource_type = ? AND resource_id = ?').run(userId, 'note', noteId);
+          db.prepare('UPDATE users SET total_votes_received = COALESCE(total_votes_received, 0) - ? WHERE id = ?').run(existing.vote, note.author_id);
+          applyImpactTierUpgrade(note.author_id);
+          return res.json({ success: true, action: 'removed', likes_count: getLikesCount(noteId), dislikes_count: getDislikesCount(noteId), user_vote: 0 });
+        } else {
+          // Change vote
+          db.prepare('UPDATE resource_votes SET vote = ?, created_at = ? WHERE user_id = ? AND resource_type = ? AND resource_id = ?').run(voteVal, createdAt, userId, 'note', noteId);
+          // Net difference is voteVal - existing.vote (e.g. 1 - (-1) = 2, or -1 - 1 = -2)
+          db.prepare('UPDATE users SET total_votes_received = COALESCE(total_votes_received, 0) + ? WHERE id = ?').run(voteVal - existing.vote, note.author_id);
+          applyImpactTierUpgrade(note.author_id);
+          return res.json({ success: true, action: 'changed', likes_count: getLikesCount(noteId), dislikes_count: getDislikesCount(noteId), user_vote: voteVal });
+        }
+      } else {
+        // Add new vote
+        db.prepare('INSERT INTO resource_votes (user_id, resource_type, resource_id, vote, created_at) VALUES (?, ?, ?, ?, ?)').run(userId, 'note', noteId, voteVal, createdAt);
+        db.prepare('UPDATE users SET total_votes_received = COALESCE(total_votes_received, 0) + ? WHERE id = ?').run(voteVal, note.author_id);
+        applyImpactTierUpgrade(note.author_id);
+        return res.json({ success: true, action: 'added', likes_count: getLikesCount(noteId), dislikes_count: getDislikesCount(noteId), user_vote: voteVal });
+      }
     } catch (e) {
+      console.error(e);
       res.status(500).json({ error: 'Error al votar' });
     }
   });
@@ -1756,20 +2723,22 @@ Respondé SOLO con JSON válido:
     if (!uploader) return res.status(401).json({ error: 'Usuario no encontrado' });
 
     try {
-      const { title, subject_id, file_url, description, year, university_id } = req.body;
+      const { title, subject_id, file_url, description, year, university_id, chair_name, profesor } = req.body;
       if (!title || !subject_id) return res.status(400).json({ error: 'Título y materia son obligatorios' });
       if (!file_url || typeof file_url !== 'string' || !file_url.trim()) return res.status(400).json({ error: 'El link de Google Drive (público) es obligatorio' });
 
       const status = uploader.tier === 'super_admin' ? 'published' : 'pending';
       const date = new Date().toISOString().split('T')[0];
       const content = description && typeof description === 'string' ? description.trim() : null;
-      const noteYear = year != null && year !== '' ? parseInt(String(year), 10) : null;
+      const noteYear = year != null && year !== '' ? String(year).trim() : null;
       const noteUniId = university_id != null && university_id !== '' ? parseInt(String(university_id), 10) : null;
+      const noteChairName = chair_name != null && chair_name !== '' ? String(chair_name).trim() : null;
+      const noteProfessor = profesor != null && profesor !== '' ? String(profesor).trim() : null;
 
       const result = db.prepare(`
-        INSERT INTO student_notes (title, author_id, subject_id, content, file_url, views, status, date, year, university_id)
-        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
-      `).run(title.trim(), userId, subject_id, content, file_url.trim(), status, date, noteYear, noteUniId);
+        INSERT INTO student_notes (title, author_id, subject_id, content, file_url, views, status, date, year, university_id, chair_name, professor)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+      `).run(title.trim(), userId, subject_id, content, file_url.trim(), status, date, noteYear, noteUniId, noteChairName, noteProfessor);
 
       res.status(201).json({ success: true, id: result.lastInsertRowid, status });
     } catch (error) {
@@ -1821,9 +2790,9 @@ Respondé SOLO con JSON válido:
     let query = 'SELECT * FROM normas';
     let params = [];
     if (q) {
-      query += ' WHERE titulo LIKE ? OR numero LIKE ? OR texto LIKE ?';
+      query += ' WHERE titulo LIKE ? OR numero LIKE ? OR texto LIKE ? OR keywords LIKE ?';
       const search = `%${q}%`;
-      params = [search, search, search];
+      params = [search, search, search, search];
     }
     const normas = db.prepare(query).all(...params);
     res.json(normas);
@@ -1838,18 +2807,56 @@ Respondé SOLO con JSON válido:
     }
   });
 
-  app.post('/api/normas', (req, res) => {
-    const { tipo, numero, anio, titulo, texto, organismo, fecha_publicacion, fuente_url } = req.body;
+  app.post('/api/normas', async (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Debe iniciar sesión para aportar normas' });
+    }
+
+    const { tipo, numero, anio, titulo, texto, organismo, fecha_publicacion, fuente_url, keywords, infoleg_link } = req.body;
     
     if (!titulo || !texto) {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
     }
 
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    const isSuperAdmin = user && user.tier === 'super_admin';
+    const estado = isSuperAdmin ? (req.body.estado || 'Vigente') : 'Pendiente';
+
+    let generatedKeywords = keywords || '';
+    if (!generatedKeywords && texto) {
+      try {
+        const keys = parseGeminiKeys();
+        if (keys.length > 0) {
+          const prompt = `Analizá el siguiente texto de una ley o norma jurídica argentina y generá entre 5 y 15 palabras clave esenciales en español separadas por comas. Devolvé únicamente la lista de palabras clave separadas por comas, sin explicaciones ni formato adicional.\n\nTEXTO:\n${texto.substring(0, 8000)}`;
+          const response = await callGeminiWithRetry({
+            model: 'gemini-2.5-flash',
+            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+          });
+          generatedKeywords = (response.text ?? '').trim();
+        }
+      } catch (err) {
+        console.error('Error generating keywords with Gemini:', err);
+      }
+    }
+
     try {
       const result = db.prepare(`
-        INSERT INTO normas (tipo, numero, anio, titulo, texto, organismo, fecha_publicacion, fuente_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(tipo || 'Ley', numero || null, anio || null, titulo, texto, organismo || null, fecha_publicacion || null, fuente_url || null);
+        INSERT INTO normas (tipo, numero, anio, titulo, texto, organismo, fecha_publicacion, fuente_url, keywords, infoleg_link, estado)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        tipo || 'Ley',
+        numero || null,
+        anio || null,
+        titulo,
+        texto,
+        organismo || null,
+        fecha_publicacion || null,
+        fuente_url || null,
+        generatedKeywords || null,
+        infoleg_link || null,
+        estado
+      );
       
       res.status(201).json({ success: true, id: result.lastInsertRowid });
     } catch (e) {
@@ -1860,22 +2867,30 @@ Respondé SOLO con JSON válido:
 
   // Text Annotations
   app.get('/api/briefs/:briefId/annotations', (req, res) => {
-    // Ideally we would filter by user_id from session, here we assume it's passed or just mock for demo
-    // The frontend should pass ?userId=X, or we return all and filter frontend side. Let's filter by userId query.
+    const loggedUserId = getUserId(req);
     const userId = req.query.userId;
     if (!userId) return res.status(400).json({ error: 'Falta userId' });
+
+    if (!loggedUserId || String(loggedUserId) !== String(userId)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
 
     const annotations = db.prepare('SELECT * FROM text_annotations WHERE brief_id = ? AND user_id = ? ORDER BY created_at DESC').all(req.params.briefId, userId);
     res.json(annotations);
   });
 
   app.post('/api/briefs/:briefId/annotations', (req, res) => {
+    const loggedUserId = getUserId(req);
     const { user_id, selected_text, note, color } = req.body;
     const brief_id = req.params.briefId;
     const created_at = new Date().toISOString();
 
     if (!selected_text || !user_id) {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+
+    if (!loggedUserId || String(loggedUserId) !== String(user_id)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
     }
 
     try {
@@ -1892,7 +2907,20 @@ Respondé SOLO con JSON válido:
   });
 
   app.delete('/api/annotations/:id', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId) return res.status(401).json({ error: 'Usuario no identificado' });
+
     try {
+      const annotation = db.prepare('SELECT user_id FROM text_annotations WHERE id = ?').get(req.params.id) as { user_id: number } | undefined;
+      if (!annotation) return res.status(404).json({ error: 'Anotación no encontrada' });
+
+      const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(loggedUserId) as { tier: string } | undefined;
+      const isSuperAdmin = user && user.tier === 'super_admin';
+
+      if (annotation.user_id !== loggedUserId && !isSuperAdmin) {
+        return res.status(403).json({ error: 'No tienes permisos para borrar esta anotación' });
+      }
+
       db.prepare('DELETE FROM text_annotations WHERE id = ?').run(req.params.id);
       res.json({ success: true });
     } catch (error) {
@@ -1902,6 +2930,11 @@ Respondé SOLO con JSON válido:
 
   // Private Notes
   app.get('/api/users/:userId/private-notes', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId || String(loggedUserId) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
     const { url } = req.query;
     let notes;
     if (url) {
@@ -1913,6 +2946,11 @@ Respondé SOLO con JSON válido:
   });
 
   app.get('/api/users/:userId/text-annotations', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId || String(loggedUserId) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
     const annotations = db.prepare(`
       SELECT ta.*, cb.title as brief_title 
       FROM text_annotations ta
@@ -1924,6 +2962,11 @@ Respondé SOLO con JSON válido:
   });
 
   app.post('/api/users/:userId/private-notes', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId || String(loggedUserId) !== String(req.params.userId)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
     const { url, page_title, content } = req.body;
     const user_id = req.params.userId;
     const date = new Date().toISOString();
@@ -1946,7 +2989,20 @@ Respondé SOLO con JSON válido:
   });
 
   app.delete('/api/private-notes/:id', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId) return res.status(401).json({ error: 'Usuario no identificado' });
+
     try {
+      const note = db.prepare('SELECT user_id FROM private_notes WHERE id = ?').get(req.params.id) as { user_id: number } | undefined;
+      if (!note) return res.status(404).json({ error: 'Nota no encontrada' });
+
+      const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(loggedUserId) as { tier: string } | undefined;
+      const isSuperAdmin = user && user.tier === 'super_admin';
+
+      if (note.user_id !== loggedUserId && !isSuperAdmin) {
+        return res.status(403).json({ error: 'No tienes permisos para borrar esta nota' });
+      }
+
       db.prepare('DELETE FROM private_notes WHERE id = ?').run(req.params.id);
       res.json({ success: true });
     } catch (error) {
@@ -1957,7 +3013,7 @@ Respondé SOLO con JSON válido:
   // Users
   app.get('/api/users', (req, res) => {
     const users = db.prepare(`
-      SELECT users.id, users.name, users.email, users.tier, users.university
+      SELECT users.id, users.name, users.email, users.tier, users.university, users.profile_role
       FROM users
       WHERE users.tier IN ('pro', 'admin', 'super_admin')
       ORDER BY users.name ASC
@@ -2050,6 +3106,31 @@ Respondé SOLO con JSON válido:
     }
   });
 
+  app.put('/api/admin/users/:id', async (req, res) => {
+    const adminId = getUserId(req);
+    if (!adminId) return res.status(401).json({ error: 'No autenticado' });
+
+    const admin = db.prepare('SELECT tier FROM users WHERE id = ?').get(adminId) as any;
+    if (!admin || admin.tier !== 'super_admin') {
+      return res.status(403).json({ error: 'Solo los super_admin pueden editar usuarios' });
+    }
+
+    const { name, email, tier, profile_role } = req.body;
+    if (!name || !email) {
+      return res.status(400).json({ error: 'Nombre y email obligatorios' });
+    }
+
+    try {
+      db.prepare('UPDATE users SET name = ?, email = ?, tier = ?, profile_role = ? WHERE id = ?').run(
+        name.trim(), email.trim(), tier || 'free', profile_role || 'Estudiante', req.params.id
+      );
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error('Error updating user:', e);
+      res.status(500).json({ error: 'Error al actualizar usuario' });
+    }
+  });
+
   // Chat rooms (Pro)
   app.get('/api/chat-rooms', (req, res) => {
     const rooms = db.prepare('SELECT id, slug, name, category FROM chat_rooms ORDER BY category, name').all();
@@ -2059,33 +3140,135 @@ Respondé SOLO con JSON válido:
   app.get('/api/chat-rooms/:id/messages', (req, res) => {
     const roomId = req.params.id;
     const limit = Math.min(100, parseInt(String(req.query.limit), 10) || 50);
+    const offset = parseInt(String(req.query.offset), 10) || 0;
     const rows = db.prepare(`
-      SELECT rm.id, rm.room_id, rm.user_id, rm.content, rm.timestamp, users.name as user_name
+      SELECT rm.id, rm.room_id, rm.user_id, rm.content, rm.timestamp, users.name as user_name, users.profile_role as user_role
       FROM room_messages rm
       JOIN users ON rm.user_id = users.id
       WHERE rm.room_id = ?
       ORDER BY rm.timestamp DESC
-      LIMIT ?
-    `).all(roomId, limit);
+      LIMIT ? OFFSET ?
+    `).all(roomId, limit, offset);
     res.json(rows.reverse());
   });
 
   // Messages
   app.get('/api/messages/:user1/:user2', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId) {
+      return res.status(401).json({ error: 'Usuario no identificado' });
+    }
+
     const { user1, user2 } = req.params;
+    
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(loggedUserId) as { tier: string } | undefined;
+    const isSuperAdmin = user && user.tier === 'super_admin';
+
+    if (String(loggedUserId) !== String(user1) && String(loggedUserId) !== String(user2) && !isSuperAdmin) {
+      return res.status(403).json({ error: 'Acceso denegado: No tienes permisos para ver estos mensajes' });
+    }
+
+    const limit = Math.min(100, parseInt(String(req.query.limit), 10) || 50);
+    const offset = parseInt(String(req.query.offset), 10) || 0;
+
     const messages = db.prepare(`
-      SELECT * FROM messages 
-      WHERE (sender_id = ? AND receiver_id = ?) 
-         OR (sender_id = ? AND receiver_id = ?)
-      ORDER BY timestamp ASC
-    `).all(user1, user2, user2, user1);
-    res.json(messages);
+      SELECT * FROM messages
+      WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `).all(user1, user2, user2, user1, limit, offset);
+    res.json(messages.reverse());
+  });
+
+  // Read messages from a sender
+  app.post('/api/messages/read', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId) return res.status(401).json({ error: 'Usuario no identificado' });
+    const { sender_id } = req.body;
+    if (!sender_id) return res.status(400).json({ error: 'sender_id es requerido' });
+
+    try {
+      db.prepare('UPDATE messages SET is_read = 1 WHERE sender_id = ? AND receiver_id = ?').run(sender_id, loggedUserId);
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al marcar mensajes como leídos' });
+    }
+  });
+
+  // Get unread counts by sender
+  app.get('/api/messages/unread-counts', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId) return res.status(401).json({ error: 'Usuario no identificado' });
+
+    try {
+      const rows = db.prepare('SELECT sender_id, COUNT(*) as count FROM messages WHERE receiver_id = ? AND is_read = 0 GROUP BY sender_id').all(loggedUserId) as { sender_id: number; count: number }[];
+      res.json(rows);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al obtener conteos de no leídos' });
+    }
+  });
+
+  // Get total unread count for current user
+  app.get('/api/messages/unread-total', (req, res) => {
+    const loggedUserId = getUserId(req);
+    if (!loggedUserId) return res.status(401).json({ error: 'Usuario no identificado' });
+
+    try {
+      const row = db.prepare('SELECT COUNT(*) as count FROM messages WHERE receiver_id = ? AND is_read = 0').get(loggedUserId) as { count: number } | undefined;
+      res.json({ total: row?.count ?? 0 });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al obtener total de no leídos' });
+    }
+  });
+
+  // Socket.io authentication middleware
+  io.use((socket, next) => {
+    let token: string | null = null;
+    const cookieHeader = socket.handshake.headers.cookie;
+    if (cookieHeader) {
+      const tokenCookie = cookieHeader.split(';').map(c => c.trim()).find(c => c.startsWith('token='));
+      if (tokenCookie) {
+        token = tokenCookie.split('=')[1];
+      }
+    }
+    if (!token && socket.handshake.query?.token) {
+      token = String(socket.handshake.query.token);
+    }
+    if (!token && socket.handshake.auth?.token) {
+      token = String(socket.handshake.auth.token);
+    }
+
+    if (!token) {
+      return next(new Error('Authentication error: No token provided'));
+    }
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_development_lexargar') as any;
+      socket.data = { userId: decoded.userId };
+      next();
+    } catch (err) {
+      next(new Error('Authentication error: Invalid token'));
+    }
   });
 
   // Socket.io logic
   io.on('connection', (socket) => {
-    socket.on('join', (userId) => {
-      socket.join(`user_${userId}`);
+    const userId = socket.data.userId;
+    if (userId) {
+      if (!onlineUsers.has(userId)) {
+        onlineUsers.set(userId, new Set());
+      }
+      onlineUsers.get(userId)!.add(socket.id);
+      io.emit('online_users', Array.from(onlineUsers.keys()));
+    }
+
+    socket.emit('online_users', Array.from(onlineUsers.keys()));
+
+    socket.on('join', () => {
+      socket.join(`user_${socket.data.userId}`);
     });
 
     socket.on('join_room', (roomId: number) => {
@@ -2097,7 +3280,8 @@ Respondé SOLO con JSON válido:
     });
 
     socket.on('send_room_message', (data: { room_id: number; user_id: number; content: string }) => {
-      const { room_id, user_id, content } = data;
+      const { room_id, content } = data;
+      const user_id = socket.data.userId; // Enforce authenticated user_id
       if (!room_id || !user_id || !content || typeof content !== 'string') return;
       const timestamp = new Date().toISOString();
       const result = db.prepare(
@@ -2116,11 +3300,12 @@ Respondé SOLO con JSON válido:
     });
 
     socket.on('send_message', (data) => {
-      const { sender_id, receiver_id, content } = data;
+      const { receiver_id, content } = data;
+      const sender_id = socket.data.userId; // Enforce authenticated sender_id
       const timestamp = new Date().toISOString();
 
       const result = db.prepare(
-        'INSERT INTO messages (sender_id, receiver_id, content, timestamp) VALUES (?, ?, ?, ?)'
+        'INSERT INTO messages (sender_id, receiver_id, content, timestamp, is_read) VALUES (?, ?, ?, ?, 0)'
       ).run(sender_id, receiver_id, content, timestamp);
 
       const newMessage = {
@@ -2128,11 +3313,25 @@ Respondé SOLO con JSON válido:
         sender_id,
         receiver_id,
         content,
-        timestamp
+        timestamp,
+        is_read: 0
       };
 
       io.to(`user_${receiver_id}`).emit('receive_message', newMessage);
       io.to(`user_${sender_id}`).emit('receive_message', newMessage);
+    });
+
+    socket.on('disconnect', () => {
+      if (userId) {
+        const userSockets = onlineUsers.get(userId);
+        if (userSockets) {
+          userSockets.delete(socket.id);
+          if (userSockets.size === 0) {
+            onlineUsers.delete(userId);
+          }
+        }
+        io.emit('online_users', Array.from(onlineUsers.keys()));
+      }
     });
   });
 
