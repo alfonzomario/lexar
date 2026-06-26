@@ -157,6 +157,10 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             alert('Formato no soportado. Aceptamos PDF, DOCX, JPG, PNG y WEBP.');
             return;
         }
+        if (file.size > 20 * 1024 * 1024) {
+            alert('El archivo es demasiado grande (máximo 20MB)');
+            return;
+        }
         analyzeWithAI({ file });
     };
 
@@ -206,9 +210,12 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             if (res.ok) {
                 onSuccess();
                 onClose();
+            } else {
+                alert('Error al guardar el fallo. Intentá de nuevo.');
             }
         } catch (error) {
             console.error('Error saving brief', error);
+            alert('Error al guardar el fallo. Intentá de nuevo.');
         } finally {
             setIsSaving(false);
         }

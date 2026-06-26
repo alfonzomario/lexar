@@ -73,6 +73,15 @@ function cleanOcrText(rawText: string): string {
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n');
 
+    // 0a. Strip database/filesystem metadata IDs (e.g., #36142009#430329533#20241022114454528)
+    cleaned = cleaned.replace(/#\d{5,}(#\d+)*/g, '');
+
+    // 0b. Strip pagination markers
+    cleaned = cleaned.replace(/--\s*\d+\s+of\s+\d+\s*--/gi, '');           // -- 1 of 11 --
+    cleaned = cleaned.replace(/Página\s+\d+\s+de\s+\d+/gi, '');            // Página X de Y
+    cleaned = cleaned.replace(/Pág(?:ina)?\.?\s*\d+\s*(?:de\s*\d+)?/gi, ''); // Pág. 3 de 10, Pag 3
+    cleaned = cleaned.replace(/^\s*-?\s*\d+\s*-?\s*$/gm, '');              // Standalone page numbers
+
     // 1. Join hyphenated words (e.g. conside- / rando or conside-\nrando)
     cleaned = cleaned.replace(/([a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]+)-\s*(?:\/)?\s*\n?\s*([a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]+)/g, '$1$2');
 

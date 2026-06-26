@@ -27,6 +27,15 @@ function cleanPdfText(rawText: string): string {
   // 1. Normalize line endings
   text = text.replace(/\r\n/g, '\n');
   
+  // Strip database/filesystem metadata
+  text = text.replace(/#\d{5,}(#\d+)*/g, '');
+
+  // Strip pagination markers
+  text = text.replace(/--\s*\d+\s+of\s+\d+\s*--/gi, '');
+  text = text.replace(/Página\s+\d+\s+de\s+\d+/gi, '');
+  text = text.replace(/Pág(?:ina)?\.?\s*\d+\s*(?:de\s*\d+)?/gi, '');
+  text = text.replace(/^\s*-?\s*\d+\s*-?\s*$/gm, '');
+
   // 2. Join hyphenated words split across lines
   text = text.replace(/([a-záéíóúñü]+)-\n+([a-záéíóúñü]+)/gi, '$1$2');
 
@@ -78,7 +87,7 @@ async function startServer() {
   });
   const onlineUsers = new Map<number, Set<string>>();
 
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
   app.use(cookieParser());
   app.use('/api/auth', authRoutes);
 
@@ -1114,8 +1123,13 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
           }
 
           if (isTextGood) {
+            // Cap text length to avoid exceeding Gemini context window
+            let safeText = extractedText;
+            if (safeText.length > 80000) {
+              safeText = safeText.substring(0, 80000);
+            }
             contentParts = [
-              { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO A ANALIZAR:\n---\n' + extractedText + '\n---' }
+              { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO A ANALIZAR:\n---\n' + safeText + '\n---' }
             ];
           } else {
             const sizeInMb = file.size / (1024 * 1024);
@@ -1136,8 +1150,12 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
       } else {
         // Text input mode
         extractedText = textInput!.trim();
+        let safeText = extractedText;
+        if (safeText.length > 80000) {
+          safeText = safeText.substring(0, 80000);
+        }
         contentParts = [
-          { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO:\n---\n' + extractedText + '\n---' }
+          { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO:\n---\n' + safeText + '\n---' }
         ];
       }
 

@@ -214,7 +214,7 @@ export function BriefDetail() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleAddAnnotation = async (text: string, note: string, color: string) => {
+  const handleAddAnnotation = async (text: string, note: string, color: string, type: 'highlight' | 'comment' = 'highlight', startIndex?: number, endIndex?: number) => {
     if (!user) return;
     const res = await fetch(`/api/briefs/${id}/annotations`, {
       method: 'POST',
@@ -224,6 +224,9 @@ export function BriefDetail() {
         selected_text: text,
         note: note,
         color: color,
+        type: type,
+        start_index: startIndex ?? null,
+        end_index: endIndex ?? null,
       })
     });
     if (res.ok) {
@@ -419,7 +422,7 @@ export function BriefDetail() {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className={clsx("flex-1 space-y-8 transition-all duration-300 ease-in-out", isAiChatOpen ? "lg:mr-[380px]" : "mr-0")}
+        className="flex-1 space-y-8"
       >
       <div className="flex items-center gap-4 mb-6">
         <Link
