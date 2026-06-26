@@ -614,6 +614,17 @@ function initDb() {
     console.log('Added chair_name column to student_notes.');
   }
 
+  // Migration: text_annotations enhancements
+  try {
+    db.prepare('SELECT start_index FROM text_annotations LIMIT 1').get();
+  } catch {
+    db.exec("ALTER TABLE text_annotations ADD COLUMN start_index INTEGER");
+    db.exec("ALTER TABLE text_annotations ADD COLUMN end_index INTEGER");
+    db.exec("ALTER TABLE text_annotations ADD COLUMN annotation_type TEXT DEFAULT 'highlight'");
+    db.exec("ALTER TABLE text_annotations ADD COLUMN norma_id INTEGER REFERENCES normas(id)");
+    console.log('Added start_index, end_index, annotation_type, norma_id to text_annotations.');
+  }
+
   // Migration: add professor to student_notes
   try {
     db.prepare('SELECT professor FROM student_notes LIMIT 1').get();

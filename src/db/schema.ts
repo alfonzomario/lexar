@@ -260,10 +260,14 @@ export const privateNotes = sqliteTable("private_notes", {
 export const textAnnotations = sqliteTable("text_annotations", {
 	id: integer().primaryKey({ autoIncrement: true }),
 	userId: integer("user_id").notNull().references(() => users.id),
-	briefId: integer("brief_id").notNull().references(() => caseBriefs.id),
+	briefId: integer("brief_id").references(() => caseBriefs.id),
+	normaId: integer("norma_id").references(() => normas.id),
 	selectedText: text("selected_text").notNull(),
 	note: text(),
 	color: text().default("bg-yellow-200"),
+	type: text("annotation_type").default("highlight"),
+	startIndex: integer("start_index"),
+	endIndex: integer("end_index"),
 	createdAt: text("created_at").notNull(),
 });
 

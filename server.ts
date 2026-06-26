@@ -20,6 +20,41 @@ import cookieParser from 'cookie-parser';
 import bcrypt from 'bcrypt';
 import { authRoutes } from './src/backend/routes/auth.routes.js';
 
+function cleanPdfText(rawText: string): string {
+  if (!rawText) return '';
+  let text = rawText;
+  
+  // 1. Normalize line endings
+  text = text.replace(/\r\n/g, '\n');
+  
+  // 2. Join hyphenated words split across lines
+  text = text.replace(/([a-záéíóúñü]+)-\n+([a-záéíóúñü]+)/gi, '$1$2');
+
+  // 3. Fix common word concatenation in Argentine legal PDFs
+  const stuckWords = [
+    { regex: /\b(el)(actor|demandado|juez|tribunal|juzgado|expediente|recurso|amparo|derecho|fallo|acuerdo)\b/gi, rep: '$1 $2' },
+    { regex: /\b(la)(actora|demandada|sentencia|cámara|resolución|ley|constitución|jurisprudencia|doctrina)\b/gi, rep: '$1 $2' },
+    { regex: /\b(del)(actor|demandado|juez|tribunal|juzgado|expediente|recurso|amparo|derecho|fallo|acuerdo)\b/gi, rep: '$1 $2' },
+    { regex: /\b(al)(actor|demandado|juez|tribunal|juzgado|expediente|recurso|amparo|derecho|fallo|acuerdo)\b/gi, rep: '$1 $2' },
+    { regex: /\b(que)(el|la|los|las|se|su)\b/gi, rep: '$1 $2' }
+  ];
+  for (const sw of stuckWords) {
+    text = text.replace(sw.regex, '$1 $2');
+  }
+
+  // 4. Normalize multiple newlines
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  // 5. Join broken lines (single newline) with a space
+  // Only if the previous line doesn't end with punctuation that naturally ends a paragraph or title
+  text = text.replace(/([^\n.:;>])\n([^\nA-Z0-9])/g, '$1 $2');
+
+  // 6. Clean duplicate spaces
+  text = text.replace(/ {2,}/g, ' ');
+
+  return text.trim();
+}
+
 async function startServer() {
   if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
     throw new Error('FATAL: JWT_SECRET environment variable is required in production.');
@@ -1064,13 +1099,21 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
             const parser = new PDFParse({ data: file.buffer });
             const pdfResult = await parser.getText();
             await parser.destroy();
-            extractedText = pdfResult.text?.trim() || '';
+            extractedText = cleanPdfText(pdfResult.text?.trim() || '');
           } catch (e) {
             console.error('[PDF Parse] text extraction failed:', e);
             extractedText = '';
           }
 
+          // Heuristic to check text quality
+          let isTextGood = false;
           if (extractedText && extractedText.length > 1000) {
+            const alphanumericCount = (extractedText.match(/[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\s]/g) || []).length;
+            const alphanumericRatio = alphanumericCount / extractedText.length;
+            isTextGood = alphanumericRatio > 0.85; // at least 85% normal characters
+          }
+
+          if (isTextGood) {
             contentParts = [
               { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO A ANALIZAR:\n---\n' + extractedText + '\n---' }
             ];
@@ -2881,7 +2924,7 @@ Respondé SOLO con JSON válido:
 
   app.post('/api/briefs/:briefId/annotations', (req, res) => {
     const loggedUserId = getUserId(req);
-    const { user_id, selected_text, note, color } = req.body;
+    const { user_id, selected_text, note, color, type, start_index, end_index } = req.body;
     const brief_id = req.params.briefId;
     const created_at = new Date().toISOString();
 
@@ -2895,9 +2938,50 @@ Respondé SOLO con JSON válido:
 
     try {
       const result = db.prepare(`
-        INSERT INTO text_annotations (user_id, brief_id, selected_text, note, color, created_at) 
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(user_id, brief_id, selected_text, note || '', color || 'bg-yellow-200', created_at);
+        INSERT INTO text_annotations (user_id, brief_id, selected_text, note, color, annotation_type, start_index, end_index, created_at) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(user_id, brief_id, selected_text, note || '', color || 'bg-yellow-200', type || 'highlight', start_index ?? null, end_index ?? null, created_at);
+
+      res.status(201).json({ success: true, id: result.lastInsertRowid });
+    } catch (error) {
+      console.error('Error saving text annotation:', error);
+      res.status(500).json({ error: 'Error interno del servidor' });
+    }
+  });
+
+  // Text Annotations for Normas
+  app.get('/api/normas/:normaId/annotations', (req, res) => {
+    const loggedUserId = getUserId(req);
+    const userId = req.query.userId;
+    if (!userId) return res.status(400).json({ error: 'Falta userId' });
+
+    if (!loggedUserId || String(loggedUserId) !== String(userId)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    const annotations = db.prepare('SELECT * FROM text_annotations WHERE norma_id = ? AND user_id = ? ORDER BY created_at DESC').all(req.params.normaId, userId);
+    res.json(annotations);
+  });
+
+  app.post('/api/normas/:normaId/annotations', (req, res) => {
+    const loggedUserId = getUserId(req);
+    const { user_id, selected_text, note, color, type, start_index, end_index } = req.body;
+    const norma_id = req.params.normaId;
+    const created_at = new Date().toISOString();
+
+    if (!selected_text || !user_id) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+
+    if (!loggedUserId || String(loggedUserId) !== String(user_id)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+
+    try {
+      const result = db.prepare(`
+        INSERT INTO text_annotations (user_id, norma_id, selected_text, note, color, annotation_type, start_index, end_index, created_at) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(user_id, norma_id, selected_text, note || '', color || 'bg-yellow-200', type || 'highlight', start_index ?? null, end_index ?? null, created_at);
 
       res.status(201).json({ success: true, id: result.lastInsertRowid });
     } catch (error) {

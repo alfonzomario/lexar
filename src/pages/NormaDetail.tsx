@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router';
 import {
   ArrowLeft, Scale, FileText, Share2, Download,
-  MessageSquare, BookOpen, Network, Sparkles,
+  MessageSquare, BookOpen, Network, Sparkles, X,
   ChevronRight, ExternalLink, AlertTriangle,
   Copy, Check, Loader2, PencilLine, Trash2
 } from 'lucide-react';
@@ -11,6 +11,7 @@ import { clsx } from 'clsx';
 import Markdown from 'react-markdown';
 import { BalanzaLoader } from '../components/BalanzaLoader';
 import { HighlightableText } from '../components/HighlightableText';
+import { BriefAiChat } from '../components/BriefAiChat';
 import { useAuth } from '../contexts/AuthContext';
 
 export function NormaDetail() {
@@ -18,10 +19,11 @@ export function NormaDetail() {
   const { user } = useAuth();
   const [norma, setNorma] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'texto' | 'relaciones' | 'ia'>('texto');
+  const [activeTab, setActiveTab] = useState<'texto' | 'relaciones'>('texto');
   const [messages, setMessages] = useState<{ role: 'user' | 'model', text: string }[]>([]);
   const [input, setInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [isAiChatOpen, setIsAiChatOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -75,53 +77,7 @@ export function NormaDetail() {
     }
   }, [activeTab, id]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const handleSendMessage = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!input.trim() || aiLoading || !norma || !id) return;
-
-    const userMessage = input.trim();
-    setInput('');
-    setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
-    setAiLoading(true);
-    setActiveTab('ia');
-    setMessages(prev => [...prev, { role: 'model', text: '' }]);
-
-    try {
-      const res = await fetch(`/api/normas/${id}/ai-chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setMessages(prev => {
-          const next = [...prev];
-          next[next.length - 1] = { role: 'model', text: data.error || 'Hubo un error al procesar tu consulta. Por favor, reintenta.' };
-          return next;
-        });
-        return;
-      }
-      setMessages(prev => {
-        const next = [...prev];
-        next[next.length - 1] = { role: 'model', text: data.text ?? '' };
-        return next;
-      });
-    } catch (error) {
-      console.error('Error in chat:', error);
-      setMessages(prev => {
-        const next = [...prev];
-        next[next.length - 1] = { role: 'model', text: 'Hubo un error al procesar tu consulta. Por favor, reintenta.' };
-        return next;
-      });
-    } finally {
-      setAiLoading(false);
-    }
-  };
+  // We use BriefAiChat component which manages its own scrolling and message sending logic
 
   const handleCopy = () => {
     if (!norma) return;
@@ -243,8 +199,16 @@ export function NormaDetail() {
   const hasRelations = relations.modifica.length > 0 || relations.modificada_por.length > 0 || briefRelations.length > 0;
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      {/* Header Navigation */}
+    <div className="flex w-full min-h-screen bg-[#FDFBF7]">
+      {/* Main Content Area */}
+      <div 
+        className={clsx(
+          "flex-1 transition-all duration-300 ease-in-out pb-24 lg:pb-8",
+          isAiChatOpen ? "lg:mr-[380px]" : "mr-0"
+        )}
+      >
+        <div className="max-w-7xl mx-auto space-y-6 px-4 md:px-8 mt-6">
+          {/* Header Navigation */}
       <div className="flex items-center justify-between">
         <Link to="/normativa" className="flex items-center gap-2 text-stone-600 hover:text-indigo-600 font-medium transition-colors">
           <ArrowLeft className="w-4 h-4" />
@@ -490,104 +454,8 @@ export function NormaDetail() {
           </div>
         </div>
 
-        {/* AI Sidebar */}
+        {/* Right Column: Annotations Sidebar */}
         <div className="lg:sticky lg:top-24 space-y-6 h-fit">
-          <div className="bg-stone-900 rounded-3xl p-6 text-white shadow-xl h-[500px] md:h-[600px] flex flex-col">
-            <div className="flex items-center gap-3 mb-6 shrink-0">
-              <div className="bg-indigo-500 p-2 rounded-xl">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h3 className="font-bold">Asistente LexARG</h3>
-                <p className="text-[10px] text-stone-400 uppercase tracking-wider">IA Grounded en Normativa</p>
-              </div>
-            </div>
-
-            {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto pr-2 mb-4 space-y-4 custom-scrollbar">
-              {messages.length === 0 ? (
-                <div className="text-center py-8 space-y-4">
-                  <p className="text-sm text-stone-400 leading-relaxed">
-                    ¿Necesitás ayuda para entender esta norma? Preguntame lo que quieras sobre el texto.
-                  </p>
-                  <div className="grid grid-cols-1 gap-2">
-                    {[
-                      "¿De qué trata esta ley?",
-                      "Explicame el Artículo 1",
-                      "¿Qué sanciones prevé?",
-                      "¿A quiénes aplica?"
-                    ].map((suggestion) => (
-                      <button
-                        key={suggestion}
-                        onClick={() => {
-                          setInput(suggestion);
-                          // We can't call handleSendMessage directly because of state update timing
-                          // but we can set input and let the user click or use a useEffect
-                        }}
-                        className="text-left p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-stone-300 hover:bg-white/10 transition-all"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                messages.map((msg, idx) => (
-                  <div
-                    key={idx}
-                    className={clsx(
-                      "flex flex-col space-y-1",
-                      msg.role === 'user' ? "items-end" : "items-start"
-                    )}
-                  >
-                    <div
-                      className={clsx(
-                        "max-w-[90%] p-3 rounded-2xl text-sm",
-                        msg.role === 'user'
-                          ? "bg-indigo-600 text-white rounded-tr-none"
-                          : "bg-white/10 text-stone-200 rounded-tl-none"
-                      )}
-                    >
-                      <div className="markdown-body prose prose-invert prose-sm max-w-none">
-                        <Markdown>{msg.text}</Markdown>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-              {aiLoading && (
-                <div className="flex gap-1 p-2">
-                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" />
-                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]" />
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Chat Input */}
-            <form onSubmit={handleSendMessage} className="relative shrink-0">
-              <input
-                type="text"
-                placeholder="Preguntá sobre la norma..."
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={aiLoading}
-                className="w-full bg-white/10 border border-white/20 rounded-2xl py-3 pl-4 pr-12 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={aiLoading || !input.trim()}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:bg-stone-700"
-              >
-                <Sparkles className="w-4 h-4 text-white" />
-              </button>
-            </form>
-            <p className="text-[9px] text-stone-500 italic mt-3 text-center">
-              * Respuestas generadas por IA. No constituye asesoramiento legal.
-            </p>
-          </div>
-
           {/* Annotations Card — Connected to API */}
           <div className="bg-white rounded-3xl p-6 border border-stone-200 shadow-sm">
             <h4 className="font-bold text-stone-900 mb-4 flex items-center gap-2">
@@ -684,6 +552,51 @@ export function NormaDetail() {
           </div>
         </div>
       </div>
+      </div> {/* End max-w-7xl mx-auto */}
+    </div> {/* End flex-1 transition-all */}
+
+    {/* Global Floating AI Widget */}
+    <div className="fixed bottom-6 right-6 z-[1000] flex flex-col items-end gap-4 pointer-events-none">
+      <AnimatePresence>
+        {isAiChatOpen && (
+          <motion.div
+            initial={{ x: 400, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 400, opacity: 0 }}
+            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            className="fixed top-24 right-6 bottom-24 w-[350px] lg:w-[360px] pointer-events-auto"
+          >
+            <BriefAiChat
+              resourceId={id!}
+              resourceType="norma"
+              messages={messages}
+              setMessages={setMessages}
+              input={input}
+              setInput={setInput}
+              aiLoading={aiLoading}
+              setAiLoading={setAiLoading}
+              isFloating={true}
+              onClose={() => setIsAiChatOpen(false)}
+              className="h-full w-full"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <button
+        onClick={() => setIsAiChatOpen(!isAiChatOpen)}
+        className="pointer-events-auto w-14 h-14 bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white rounded-full shadow-2xl hover:shadow-indigo-500/50 transition-all flex items-center justify-center hover:scale-105 active:scale-95 border-2 border-white/25 relative group"
+        title={isAiChatOpen ? "Cerrar Asistente" : "Asistente LexARG"}
+      >
+        {isAiChatOpen ? <X className="w-6 h-6" /> : <Sparkles className="w-6 h-6 animate-pulse" />}
+        {!isAiChatOpen && (
+          <span className="absolute right-16 bg-stone-900 text-white text-xs px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none font-sans">
+            Asistente LexARG
+          </span>
+        )}
+      </button>
+    </div>
+
     </div>
   );
 }

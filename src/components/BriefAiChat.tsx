@@ -9,7 +9,8 @@ interface Message {
 }
 
 interface BriefAiChatProps {
-  briefId: string | number;
+  resourceId: string | number;
+  resourceType: 'brief' | 'norma';
   messages: Message[];
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
   input: string;
@@ -22,7 +23,8 @@ interface BriefAiChatProps {
 }
 
 export function BriefAiChat({
-  briefId,
+  resourceId,
+  resourceType,
   messages,
   setMessages,
   input,
@@ -41,7 +43,7 @@ export function BriefAiChat({
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!input.trim() || aiLoading || !briefId) return;
+    if (!input.trim() || aiLoading || !resourceId) return;
 
     const userMessage = input.trim();
     setInput('');
@@ -50,7 +52,11 @@ export function BriefAiChat({
     setMessages(prev => [...prev, { role: 'model', text: '' }]);
 
     try {
-      const res = await fetch(`/api/briefs/${briefId}/ai-chat`, {
+      const endpoint = resourceType === 'norma' 
+        ? `/api/normas/${resourceId}/ai-chat`
+        : `/api/briefs/${resourceId}/ai-chat`;
+        
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage }),
@@ -85,7 +91,7 @@ export function BriefAiChat({
   return (
     <div className={clsx(
       "bg-indigo-900 bg-gradient-to-br from-indigo-900 to-indigo-800 rounded-3xl text-white shadow-2xl border border-indigo-700/50 flex flex-col overflow-hidden",
-      isFloating ? "p-5 h-[500px] md:h-[550px] w-80 md:w-96" : "p-6 h-[500px] md:h-[600px]",
+      isFloating ? "p-5 w-[380px] h-[600px] max-h-[85vh] fixed top-24 right-6 z-[1000] lg:static lg:w-full lg:h-[calc(100vh-140px)] lg:max-h-none lg:z-auto lg:top-0 lg:right-0" : "p-6 h-[500px] md:h-[600px]",
       className
     )}>
       {/* Header */}

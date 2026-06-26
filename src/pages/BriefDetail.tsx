@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router';
-import { Scale, ArrowLeft, FileText, Bookmark, Share2, AlertCircle, Sparkles, Trash2, Calendar, Users, Landmark, Book, BookText, X, Check, Download } from 'lucide-react';
+import { Scale, ArrowLeft, FileText, Bookmark, Share2, AlertCircle, Sparkles, Trash2, Calendar, Users, Landmark, Book, BookText, X, Check, Download, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import Markdown from 'react-markdown';
@@ -415,11 +415,12 @@ export function BriefDetail() {
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-8"
-    >
+    <div className="flex w-full min-h-screen">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={clsx("flex-1 space-y-8 transition-all duration-300 ease-in-out", isAiChatOpen ? "lg:mr-[380px]" : "mr-0")}
+      >
       <div className="flex items-center gap-4 mb-6">
         <Link
           to="/briefs"
@@ -661,9 +662,28 @@ export function BriefDetail() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-8">
-          <div className="lg:col-span-2 space-y-8">
+          <div className="lg:col-span-3 space-y-8">
             {activeTab === 'tldr' && (
               <div className="space-y-8">
+                {isPro && (
+                  <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm mb-8">
+                    <h3 className="font-bold text-stone-900 mb-2 flex items-center gap-2 text-lg">
+                      <Sparkles className="w-5 h-5 text-indigo-600" />
+                      Resumen con IA
+                    </h3>
+                    {!aiSummary && !aiSummaryLoading && (
+                      <button type="button" onClick={fetchAiSummary} className="text-sm px-4 py-2 bg-indigo-50 text-indigo-600 rounded-lg font-bold hover:bg-indigo-100 transition-colors">
+                        Generar resumen automático
+                      </button>
+                    )}
+                    {aiSummaryLoading && <p className="text-sm text-stone-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Generando resumen...</p>}
+                    {aiSummary && !aiSummaryLoading && (
+                      <div className="text-sm text-stone-700 leading-relaxed whitespace-pre-line mt-2 bg-stone-50 p-4 rounded-xl border border-stone-100">
+                        <Markdown>{aiSummary}</Markdown>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {timelineArr.length > 0 && (
                   <section className="bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
                     <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-stone-900 border-b border-stone-50 pb-2">
@@ -815,79 +835,50 @@ export function BriefDetail() {
               </div>
             )}
           </div>
-
-          {/* AI Sidebar */}
-          <div className="lg:sticky lg:top-24 space-y-6 h-fit">
-            {isPro && (
-              <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
-                <h3 className="font-bold text-stone-900 mb-2 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-indigo-600" />
-                  Resumen con IA
-                </h3>
-                {!aiSummary && !aiSummaryLoading && (
-                  <button type="button" onClick={fetchAiSummary} className="text-sm text-indigo-600 font-medium hover:underline">
-                    Generar resumen del fallo
-                  </button>
-                )}
-                {aiSummaryLoading && <p className="text-sm text-stone-500">Generando...</p>}
-                {aiSummary && !aiSummaryLoading && (
-                  <div className="text-sm text-stone-700 leading-relaxed whitespace-pre-line mt-2">
-                    <Markdown>{aiSummary}</Markdown>
-                  </div>
-                )}
-              </div>
-            )}
-            <BriefAiChat
-              briefId={id!}
-              messages={messages}
-              setMessages={setMessages}
-              input={input}
-              setInput={setInput}
-              aiLoading={aiLoading}
-              setAiLoading={setAiLoading}
-            />
-          </div>
         </div>
       )}
 
-      {/* Floating AI Widget (only visible in full tab) */}
-      {activeTab === 'full' && (
-        <div className="fixed bottom-6 right-6 z-50 font-sans lg:hidden">
-          <AnimatePresence>
-            {isAiChatOpen && (
-              <motion.div
-                initial={{ opacity: 0, y: 20, scale: 0.9 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 20, scale: 0.9 }}
-                className="absolute bottom-16 right-0 z-50 shrink-0"
-              >
-                <BriefAiChat
-                  briefId={id!}
-                  messages={messages}
-                  setMessages={setMessages}
-                  input={input}
-                  setInput={setInput}
-                  aiLoading={aiLoading}
-                  setAiLoading={setAiLoading}
-                  isFloating={true}
-                  onClose={() => setIsAiChatOpen(false)}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+      {/* Global Floating AI Widget */}
+      <div className="fixed bottom-6 right-6 z-[1000] flex flex-col items-end gap-4 pointer-events-none">
+        <AnimatePresence>
+          {isAiChatOpen && (
+            <motion.div
+              initial={{ x: 400, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 400, opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="fixed top-24 right-6 bottom-24 w-[350px] lg:w-[360px] pointer-events-auto"
+            >
+              <BriefAiChat
+                resourceId={id!}
+                resourceType="brief"
+                messages={messages}
+                setMessages={setMessages}
+                input={input}
+                setInput={setInput}
+                aiLoading={aiLoading}
+                setAiLoading={setAiLoading}
+                isFloating={true}
+                onClose={() => setIsAiChatOpen(false)}
+                className="h-full w-full"
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-          <button
-            onClick={() => setIsAiChatOpen(!isAiChatOpen)}
-            className="w-14 h-14 bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white rounded-full shadow-xl hover:shadow-2xl transition-all flex items-center justify-center hover:scale-105 active:scale-95 border-2 border-white/25 relative group"
-            title="Asistente LexARG"
-          >
-            <Sparkles className="w-6 h-6 animate-pulse" />
+        <button
+          onClick={() => setIsAiChatOpen(!isAiChatOpen)}
+          className="pointer-events-auto w-14 h-14 bg-gradient-to-tr from-indigo-600 to-indigo-500 text-white rounded-full shadow-2xl hover:shadow-indigo-500/50 transition-all flex items-center justify-center hover:scale-105 active:scale-95 border-2 border-white/25 relative group"
+          title={isAiChatOpen ? "Cerrar Asistente" : "Asistente LexARG"}
+        >
+          {isAiChatOpen ? <X className="w-6 h-6" /> : <Sparkles className="w-6 h-6 animate-pulse" />}
+          {!isAiChatOpen && (
             <span className="absolute right-16 bg-stone-900 text-white text-xs px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-md pointer-events-none font-sans">
               Asistente LexARG
             </span>
-          </button>
-        </div>
-      )}
+          )}
+        </button>
+      </div>
 
       {/* Modal de Compartir Interno */}
       <AnimatePresence>
@@ -1003,6 +994,7 @@ export function BriefDetail() {
           </div>
         )}
       </AnimatePresence>
-    </motion.div>
+      </motion.div>
+    </div>
   );
 }
