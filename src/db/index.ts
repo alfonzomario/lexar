@@ -646,6 +646,12 @@ function initDb() {
     console.log('Created default super_admin user (admin@lexar.ar).');
   }
 
+  // Permite resetear la contraseña del admin a NULL mediante variable de entorno
+  if (process.env.RESET_ADMIN_PASSWORD === 'true') {
+    db.prepare("UPDATE users SET password = NULL WHERE email = 'admin@lexar.ar'").run();
+    console.log('RESET_ADMIN_PASSWORD: La contraseña de admin@lexar.ar ha sido restablecida a NULL.');
+  }
+
   // Seed chat rooms if empty
   const roomCount = db.prepare('SELECT COUNT(*) as count FROM chat_rooms').get() as { count: number };
   if (roomCount.count === 0) {
