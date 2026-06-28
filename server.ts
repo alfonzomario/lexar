@@ -132,7 +132,7 @@ async function startServer() {
   };
 
   let currentApiKeyIndex = 0;
-  const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+  const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 
   const parseGeminiKeys = (): string[] => {
     const rawKeys = process.env.GEMINI_API_KEY || '';
