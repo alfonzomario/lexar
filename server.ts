@@ -15,6 +15,7 @@ import { Server } from 'socket.io';
 import { createRequire } from 'module';
 const require2 = createRequire(import.meta.url);
 const { PDFParse } = require2('pdf-parse');
+import mammoth from 'mammoth';
 import jwt from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcrypt';
@@ -80,6 +81,9 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   const httpServer = http.createServer(app);
 
+  // Timeout de 3.5 minutos para que Express corte antes que Railway (5 min)
+  httpServer.setTimeout(210_000);
+
   // Multer for PDF uploads (max 20MB, memory storage)
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   const io = new Server(httpServer, {
@@ -128,6 +132,7 @@ async function startServer() {
   };
 
   let currentApiKeyIndex = 0;
+  const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 
   const parseGeminiKeys = (): string[] => {
     const rawKeys = process.env.GEMINI_API_KEY || '';
@@ -147,15 +152,14 @@ async function startServer() {
     const keys = parseGeminiKeys();
     if (keys.length > 1) {
       currentApiKeyIndex = (currentApiKeyIndex + 1) % keys.length;
-      console.warn(`[Gemini] Rotating API key to index ${currentApiKeyIndex + 1}/${keys.length}...`);
+      console.warn(`[Gemini] Rotando key a índice ${currentApiKeyIndex + 1}/${keys.length}...`);
     }
   };
 
-  // --- Gemini helper with retry and key rotation ---
+  // --- Gemini helper (UNIFICADO) con retry robusto y backoff exponencial ---
   const callGeminiWithRetry = async (
     params: { model: string; contents: any; config?: any },
-    retries = 1,
-    delayMs = 2000
+    maxRetries = 3
   ): Promise<any> => {
     const keys = parseGeminiKeys();
     if (keys.length === 0) {
@@ -163,35 +167,46 @@ async function startServer() {
     }
 
     let lastError: any = null;
-    for (let attempts = 0; attempts < keys.length; attempts++) {
+    const totalAttempts = Math.max(keys.length, maxRetries);
+
+    for (let attempt = 0; attempt < totalAttempts; attempt++) {
       const ai = getGeminiClient();
       try {
-        return await ai.models.generateContent(params);
+        // Timeout de 2.5 minutos por intento (para archivos pesados)
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 150_000);
+
+        const result = await ai.models.generateContent(params);
+        clearTimeout(timeout);
+        return result;
       } catch (err: any) {
         lastError = err;
-        console.error(`[Gemini] Key at index ${currentApiKeyIndex % keys.length} failed:`, err?.message || err);
-        
+        const errMsg = err?.message || String(err);
+        console.error(`[Gemini] Intento ${attempt + 1}/${totalAttempts} falló:`, errMsg);
+
+        // Rotar keys si hay múltiples
         if (keys.length > 1) {
           rotateGeminiKey();
-          continue; // Try the next key in the list
         }
 
-        // Single key retry logic
-        const isRateLimit = err?.message?.includes('429') || err?.message?.includes('quota');
-        const isRetryable = isRateLimit || err?.message?.includes('500') || err?.message?.includes('503');
-        if (isRetryable) {
-          console.warn(`[Gemini] Attempt failed, retrying in ${delayMs}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-          try {
-            return await ai.models.generateContent(params);
-          } catch (retryErr) {
-            lastError = retryErr;
-          }
+        const isRateLimit = errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED');
+        const isServerError = errMsg.includes('500') || errMsg.includes('503') || errMsg.includes('INTERNAL');
+        const isRetryable = isRateLimit || isServerError;
+
+        if (!isRetryable) {
+          break;
         }
-        break; // If only one key, don't loop
+
+        if (attempt < totalAttempts - 1) {
+          // Backoff exponencial: 3s, 9s, 27s
+          const baseDelay = isRateLimit ? 5000 : 3000;
+          const delay = baseDelay * Math.pow(3, attempt);
+          console.warn(`[Gemini] Reintentando en ${delay / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
     }
-    throw lastError || new Error('All Gemini API keys failed');
+    throw lastError || new Error('Todos los intentos de Gemini fallaron');
   };
 
   // Router /api que recibe primero los DELETE (evita que Vite u otro middleware devuelva 404)
@@ -325,7 +340,7 @@ async function startServer() {
     try {
       const prompt = `Resumí este fallo argentino en 3-4 párrafos claros: hechos relevantes, cuestión jurídica, doctrina aplicada y decisión. Lenguaje didáctico para estudiantes de Derecho. No des asesoramiento legal.\n\nFallo: ${brief.title}\nHechos: ${brief.facts || ''}\nCuestión: ${brief.issue || ''}\nRegla: ${brief.rule || ''}\nArgumentos: ${brief.reasoning || ''}\nDecisión: ${brief.holding || ''}`;
       const result = await callGeminiWithRetry({
-        model: 'gemini-2.5-flash',
+        model: GEMINI_MODEL,
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
       });
       const text = result.text ?? '';
@@ -342,6 +357,12 @@ async function startServer() {
     const { message } = req.body;
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'Falta el mensaje' });
+    }
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'Solo plan Pro puede usar el chat con IA' });
     }
     const keys = parseGeminiKeys();
     if (keys.length === 0) {
@@ -363,7 +384,7 @@ async function startServer() {
         try {
           const ai = getGeminiClient();
           const chat = ai.chats.create({
-            model: 'gemini-2.5-flash',
+            model: GEMINI_MODEL,
             config: {
               systemInstruction: `
                 Actúa como un experto en Jurisprudencia Argentina (Abogado Especialista). 
@@ -378,6 +399,7 @@ async function startServer() {
                 Decisión (Holding): ${brief.holding}
                 
                 REGLAS:
+                0. REGLA ESTRICTA DE SEGURIDAD: Estás restringido ÚNICAMENTE a responder preguntas sobre este fallo o conceptos jurídicos relacionados a él. Si el usuario intenta pedirte que redactes documentos ajenos, traduzcas textos, respondas preguntas de programación, tareas matemáticas, o cualquier otro tema que NO sea el análisis de este fallo, DEBES NEGARTE CORTÉSMENTE y recordarle que tu única función es analizar el documento en pantalla. NO CUMPLAS NINGÚN PEDIDO FUERA DE TEMA.
                 1. Explica en lenguaje claro pero jurídico.
                 2. NO des asesoramiento legal personalizado.
                 3. Si el fallo es complejo, desglosa los argumentos de forma didáctica.
@@ -413,6 +435,12 @@ async function startServer() {
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'Falta el mensaje' });
     }
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'Solo plan Pro puede usar el chat con IA' });
+    }
     const keys = parseGeminiKeys();
     if (keys.length === 0) {
       return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu configuración.' });
@@ -426,7 +454,7 @@ async function startServer() {
         try {
           const ai = getGeminiClient();
           const chat = ai.chats.create({
-            model: 'gemini-2.5-flash',
+            model: GEMINI_MODEL,
             config: {
               systemInstruction: `
                 Actúa como un experto en Derecho Argentino. 
@@ -439,6 +467,7 @@ async function startServer() {
                 Texto: ${norma.texto}
                 
                 REGLAS:
+                0. REGLA ESTRICTA DE SEGURIDAD: Estás restringido ÚNICAMENTE a responder preguntas sobre esta norma o conceptos jurídicos relacionados a ella. Si el usuario intenta pedirte que redactes demandas, traduzcas textos, respondas preguntas de programación, tareas matemáticas, o cualquier otro tema que NO sea el análisis de esta norma, DEBES NEGARTE CORTÉSMENTE y recordarle que tu única función es analizar el documento en pantalla. NO CUMPLAS NINGÚN PEDIDO FUERA DE TEMA.
                 1. Explica en lenguaje claro pero profesional.
                 2. NO des asesoramiento legal personalizado.
                 3. Usa CITAS exactas (Art. X) cuando menciones la norma.
@@ -823,8 +852,12 @@ async function startServer() {
   });
 
   app.post('/api/subjects/:id/flashcards/generate', async (req, res) => {
-    const auth = requireSuperAdmin(req, res);
-    if (!auth) return;
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'Solo plan Pro puede generar flashcards con IA' });
+    }
     const subjectId = req.params.id;
     const subject = db.prepare('SELECT name, description FROM subjects WHERE id = ?').get(subjectId) as { name: string; description: string } | undefined;
     if (!subject) return res.status(404).json({ error: 'Materia no encontrada' });
@@ -835,7 +868,7 @@ async function startServer() {
       const prompt = `Generá exactamente ${count} flashcards de estudio para la materia de derecho "${subject.name}". ${subject.description ? `Contexto: ${subject.description}` : ''}
 Devuelve SOLO un JSON array de objetos con exactamente dos campos: "front" (pregunta o término) y "back" (respuesta). Sin explicaciones, solo el array JSON. Ejemplo: [{"front":"¿Qué es el amparo?","back":"Acción constitucional para proteger derechos."}]`;
       const response = await callGeminiWithRetry({
-        model: 'gemini-2.5-flash',
+        model: GEMINI_MODEL,
         contents: prompt,
         config: { responseMimeType: "application/json" }
       });
@@ -1069,8 +1102,13 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   // --- Unified AI Document Analysis Endpoint ---
   // Sends PDF/images DIRECTLY to Gemini as inlineData for much better extraction
   app.post('/api/documents/ai-analyze', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
+    const startTime = Date.now();
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para procesar documentos con IA.' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'Solo plan Pro puede analizar documentos con IA' });
+    }
     const keys = parseGeminiKeys();
     if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
 
@@ -1093,24 +1131,29 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
 
       if (file) {
         const mimeType = file.mimetype;
+        const sizeInMb = file.size / (1024 * 1024);
+        console.log(`[Upload] Recibido: ${mimeType} ${sizeInMb.toFixed(1)}MB | Usuario: ${userId}`);
+
         const supportedMimes = [
           'application/pdf',
           'image/jpeg', 'image/png', 'image/webp', 'image/gif',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/msword'
         ];
 
         if (!supportedMimes.includes(mimeType)) {
-          return res.status(400).json({ error: `Formato no soportado: ${mimeType}. Usá PDF, DOCX, JPG o PNG.` });
+          return res.status(400).json({ error: `Formato no soportado: ${mimeType}. Usá PDF, DOCX, DOC, JPG o PNG.` });
         }
 
         if (mimeType === 'application/pdf') {
+          // --- PDF Processing ---
           try {
             const parser = new PDFParse({ data: file.buffer });
             const pdfResult = await parser.getText();
             await parser.destroy();
             extractedText = cleanPdfText(pdfResult.text?.trim() || '');
           } catch (e) {
-            console.error('[PDF Parse] text extraction failed:', e);
+            console.error('[Upload] PDF text extraction falló:', e);
             extractedText = '';
           }
 
@@ -1119,29 +1162,84 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
           if (extractedText && extractedText.length > 1000) {
             const alphanumericCount = (extractedText.match(/[a-zA-ZáéíóúÁÉÍÓÚñÑ0-9\s]/g) || []).length;
             const alphanumericRatio = alphanumericCount / extractedText.length;
-            isTextGood = alphanumericRatio > 0.85; // at least 85% normal characters
+            isTextGood = alphanumericRatio > 0.85;
           }
 
           if (isTextGood) {
-            // Cap text length to avoid exceeding Gemini context window
+            console.log(`[Upload] PDF parseado: ${extractedText.length.toLocaleString()} chars | Calidad: buena`);
             let safeText = extractedText;
             if (safeText.length > 80000) {
               safeText = safeText.substring(0, 80000);
+              console.log('[Upload] Texto truncado a 80,000 chars');
             }
             contentParts = [
               { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO A ANALIZAR:\n---\n' + safeText + '\n---' }
             ];
           } else {
-            const sizeInMb = file.size / (1024 * 1024);
+            console.log(`[Upload] PDF escaneado (texto pobre: ${extractedText.length} chars) | Enviando como imagen`);
             if (sizeInMb > 15) {
               return res.status(400).json({ error: 'El archivo PDF es escaneado (sin texto copiable) y demasiado grande para procesar (>15MB). Por favor, subí un documento con texto copiable o más corto.' });
             }
+            // Para PDFs escaneados grandes (>5MB), usar File API
+            if (sizeInMb > 5) {
+              try {
+                console.log('[Upload] Usando File API para PDF escaneado grande...');
+                const ai = getGeminiClient();
+                const uploadedFile = await ai.files.upload({
+                  file: new Blob([file.buffer], { type: mimeType }),
+                  config: { mimeType },
+                });
+                contentParts = [
+                  { fileData: { fileUri: uploadedFile.uri, mimeType } },
+                  { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
+                ];
+              } catch (fileApiErr) {
+                console.error('[Upload] File API falló, cayendo a inlineData:', fileApiErr);
+                contentParts = [
+                  { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+                  { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
+                ];
+              }
+            } else {
+              contentParts = [
+                { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+                { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
+              ];
+            }
+          }
+        } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || mimeType === 'application/msword') {
+          // --- DOCX/DOC Processing with mammoth ---
+          try {
+            console.log('[Upload] Extrayendo texto de Word con mammoth...');
+            const mammothResult = await mammoth.extractRawText({ buffer: file.buffer });
+            extractedText = mammothResult.value?.trim() || '';
+            console.log(`[Upload] Word parseado: ${extractedText.length.toLocaleString()} chars`);
+          } catch (e) {
+            console.error('[Upload] mammoth extraction falló:', e);
+            extractedText = '';
+          }
+
+          if (extractedText && extractedText.length > 500) {
+            // Buen texto extraído → enviar como texto puro (más barato y confiable)
+            let safeText = extractedText;
+            if (safeText.length > 80000) {
+              safeText = safeText.substring(0, 80000);
+              console.log('[Upload] Texto truncado a 80,000 chars');
+            }
+            contentParts = [
+              { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO A ANALIZAR:\n---\n' + safeText + '\n---' }
+            ];
+          } else {
+            // Poco texto → enviar como binario a Gemini (fallback)
+            console.log('[Upload] Poco texto extraído de Word, enviando como inlineData');
             contentParts = [
               { inlineData: { mimeType, data: file.buffer.toString('base64') } },
               { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
             ];
           }
         } else {
+          // --- Image Processing ---
+          console.log(`[Upload] Imagen recibida: ${mimeType}`);
           contentParts = [
             { inlineData: { mimeType, data: file.buffer.toString('base64') } },
             { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
@@ -1150,6 +1248,7 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
       } else {
         // Text input mode
         extractedText = textInput!.trim();
+        console.log(`[Upload] Texto manual: ${extractedText.length.toLocaleString()} chars | Usuario: ${userId}`);
         let safeText = extractedText;
         if (safeText.length > 80000) {
           safeText = safeText.substring(0, 80000);
@@ -1159,18 +1258,21 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
         ];
       }
 
+      console.log('[Upload] Enviando a Gemini (PAID)...');
       const response = await callGeminiWithRetry({
-        model: 'gemini-2.5-flash',
+        model: GEMINI_MODEL,
         contents: [{ role: 'user', parts: contentParts }],
         config: { responseMimeType: 'application/json' }
       });
 
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const resultText = (response.text ?? '').trim();
       let parsed;
       try {
         parsed = JSON.parse(resultText);
+        console.log(`[Upload] Gemini respondió en ${elapsed}s | JSON válido ✓`);
       } catch (err) {
-        console.error('[AI Analyze] JSON parse failed:', resultText.substring(0, 200));
+        console.error(`[Upload] JSON parse falló después de ${elapsed}s:`, resultText.substring(0, 200));
         return res.status(502).json({ error: 'La IA no devolvió una respuesta válida. Intentá de nuevo.' });
       }
 
@@ -1179,8 +1281,9 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
 
       res.json(parsed);
     } catch (e: any) {
-      console.error('[AI Analyze] Error:', e?.message || e);
-      if (e?.message?.includes('429') || e?.message?.includes('quota')) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.error(`[Upload] Error después de ${elapsed}s:`, e?.message || e);
+      if (e?.message?.includes('429') || e?.message?.includes('quota') || e?.message?.includes('RESOURCE_EXHAUSTED')) {
         return res.status(429).json({ error: 'Se superó la cuota de la IA. Esperá unos minutos e intentá de nuevo.' });
       }
       res.status(500).json({ error: 'Error al analizar el documento con IA. Intentá de nuevo.' });
@@ -1191,18 +1294,23 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   app.post('/api/briefs/ai-parse', async (req, res) => {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para usar esta herramienta.' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'Solo plan Pro puede analizar documentos con IA' });
+    }
     const keys = parseGeminiKeys();
     if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada' });
     const { text } = req.body;
     if (!text || typeof text !== 'string') return res.status(400).json({ error: 'Falta texto' });
 
     try {
+      console.log(`[Upload Legacy] Texto: ${text.length.toLocaleString()} chars | Usuario: ${userId}`);
       const allSubjects = db.prepare('SELECT name FROM subjects').all() as { name: string }[];
       const subjectsList = allSubjects.map(s => s.name).join(', ');
       const systemPrompt = buildBriefAnalysisPrompt(subjectsList);
 
       const response = await callGeminiWithRetry({
-        model: 'gemini-2.5-flash',
+        model: GEMINI_MODEL,
         contents: systemPrompt + '\n\nTEXTO DEL DOCUMENTO:\n---\n' + text.substring(0, 80000) + '\n---',
         config: { responseMimeType: 'application/json' }
       });
@@ -1211,13 +1319,13 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
       try {
         parsed = JSON.parse(resultText);
       } catch (err) {
-        console.error('JSON parse AI', err);
+        console.error('[Upload Legacy] JSON parse falló:', err);
         return res.status(502).json({ error: 'La IA no devolvió JSON válido. Intentá de nuevo.' });
       }
       res.json(parsed);
     } catch (e: any) {
-      console.error('AI Parse Error:', e);
-      if (e?.message?.includes('429') || e?.message?.includes('quota')) {
+      console.error('[Upload Legacy] Error:', e?.message || e);
+      if (e?.message?.includes('429') || e?.message?.includes('quota') || e?.message?.includes('RESOURCE_EXHAUSTED')) {
         return res.status(429).json({ error: 'Se superó la cuota de la IA. Esperá unos minutos.' });
       }
       res.status(500).json({ error: 'Error al procesar con IA' });
@@ -1226,8 +1334,13 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
 
   // --- Norma AI Parse Endpoint ---
   app.post('/api/normas/ai-parse', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
+    const startTime = Date.now();
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión para usar esta herramienta.' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as any;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'Solo plan Pro puede analizar documentos con IA' });
+    }
     const keys = parseGeminiKeys();
     if (keys.length === 0) return res.status(503).json({ error: 'IA no configurada. Agregá GEMINI_API_KEY en tu archivo .env.' });
 
@@ -1270,32 +1383,66 @@ Respondé SOLO con JSON válido:
 
       if (file) {
         const mimeType = file.mimetype;
+        const sizeInMb = file.size / (1024 * 1024);
+        console.log(`[Upload Norma] Recibido: ${mimeType} ${sizeInMb.toFixed(1)}MB | Usuario: ${userId}`);
+
         if (mimeType === 'application/pdf') {
+          // --- PDF ---
           try {
             const parser = new PDFParse({ data: file.buffer });
             const pdfResult = await parser.getText();
             await parser.destroy();
             extractedText = pdfResult.text?.trim() || '';
           } catch (e) {
-            console.error('[PDF Parse Norma] text extraction failed:', e);
+            console.error('[Upload Norma] PDF text extraction falló:', e);
             extractedText = '';
           }
 
           if (extractedText && extractedText.length > 1000) {
+            console.log(`[Upload Norma] PDF parseado: ${extractedText.length.toLocaleString()} chars`);
+            let safeText = extractedText;
+            if (safeText.length > 80000) safeText = safeText.substring(0, 80000);
             contentParts = [
-              { text: normaPrompt + '\n\nTEXTO DE LA NORMA A ANALIZAR:\n---\n' + extractedText + '\n---' }
+              { text: normaPrompt + '\n\nTEXTO DE LA NORMA A ANALIZAR:\n---\n' + safeText + '\n---' }
             ];
           } else {
-            const sizeInMb = file.size / (1024 * 1024);
             if (sizeInMb > 15) {
               return res.status(400).json({ error: 'El archivo PDF es escaneado y demasiado grande (>15MB). Por favor, subí un documento con texto copiable o más corto.' });
             }
+            console.log('[Upload Norma] PDF escaneado, enviando como imagen');
+            contentParts = [
+              { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+              { text: normaPrompt + '\n\nAnalizá el documento adjunto y extraé la información.' }
+            ];
+          }
+        } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || mimeType === 'application/msword') {
+          // --- DOCX/DOC with mammoth ---
+          try {
+            console.log('[Upload Norma] Extrayendo texto de Word con mammoth...');
+            const mammothResult = await mammoth.extractRawText({ buffer: file.buffer });
+            extractedText = mammothResult.value?.trim() || '';
+            console.log(`[Upload Norma] Word parseado: ${extractedText.length.toLocaleString()} chars`);
+          } catch (e) {
+            console.error('[Upload Norma] mammoth extraction falló:', e);
+            extractedText = '';
+          }
+
+          if (extractedText && extractedText.length > 500) {
+            let safeText = extractedText;
+            if (safeText.length > 80000) safeText = safeText.substring(0, 80000);
+            contentParts = [
+              { text: normaPrompt + '\n\nTEXTO DE LA NORMA A ANALIZAR:\n---\n' + safeText + '\n---' }
+            ];
+          } else {
+            console.log('[Upload Norma] Poco texto de Word, enviando como inlineData');
             contentParts = [
               { inlineData: { mimeType, data: file.buffer.toString('base64') } },
               { text: normaPrompt + '\n\nAnalizá el documento adjunto y extraé la información.' }
             ];
           }
         } else {
+          // --- Images ---
+          console.log(`[Upload Norma] Imagen: ${mimeType}`);
           contentParts = [
             { inlineData: { mimeType, data: file.buffer.toString('base64') } },
             { text: normaPrompt + '\n\nAnalizá el documento adjunto y extraé la información.' }
@@ -1303,31 +1450,36 @@ Respondé SOLO con JSON válido:
         }
       } else {
         extractedText = textInput!.trim();
+        console.log(`[Upload Norma] Texto manual: ${extractedText.length.toLocaleString()} chars`);
         contentParts = [
           { text: normaPrompt + '\n\nTEXTO DE LA NORMA:\n---\n' + extractedText + '\n---' }
         ];
       }
 
+      console.log('[Upload Norma] Enviando a Gemini (PAID)...');
       const response = await callGeminiWithRetry({
-        model: 'gemini-2.5-flash',
+        model: GEMINI_MODEL,
         contents: [{ role: 'user', parts: contentParts }],
         config: { responseMimeType: 'application/json' }
       });
 
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const resultText = (response.text ?? '').trim();
       let parsed;
       try {
         parsed = JSON.parse(resultText);
+        console.log(`[Upload Norma] Gemini respondió en ${elapsed}s | JSON válido ✓`);
       } catch (err) {
-        console.error('[Norma AI] JSON parse failed');
+        console.error(`[Upload Norma] JSON parse falló después de ${elapsed}s`);
         return res.status(502).json({ error: 'La IA no devolvió una respuesta válida.' });
       }
 
       parsed._extractedText = extractedText;
       res.json(parsed);
     } catch (e: any) {
-      console.error('[Norma AI Parse] Error:', e?.message || e);
-      if (e?.message?.includes('429')) {
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.error(`[Upload Norma] Error después de ${elapsed}s:`, e?.message || e);
+      if (e?.message?.includes('429') || e?.message?.includes('quota') || e?.message?.includes('RESOURCE_EXHAUSTED')) {
         return res.status(429).json({ error: 'Cuota de IA excedida. Esperá unos minutos.' });
       }
       res.status(500).json({ error: 'Error al analizar la norma con IA.' });
@@ -2891,7 +3043,7 @@ Respondé SOLO con JSON válido:
         if (keys.length > 0) {
           const prompt = `Analizá el siguiente texto de una ley o norma jurídica argentina y generá entre 5 y 15 palabras clave esenciales en español separadas por comas. Devolvé únicamente la lista de palabras clave separadas por comas, sin explicaciones ni formato adicional.\n\nTEXTO:\n${texto.substring(0, 8000)}`;
           const response = await callGeminiWithRetry({
-            model: 'gemini-2.5-flash',
+            model: GEMINI_MODEL,
             contents: [{ role: 'user', parts: [{ text: prompt }] }]
           });
           generatedKeywords = (response.text ?? '').trim();

@@ -1,6 +1,6 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Scale, FileText, Calendar, Building2, Upload, Sparkles, FileUp, Type, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { X, Scale, FileText, Calendar, Building2, Upload, Sparkles, FileUp, Type, ArrowLeft, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { clsx } from 'clsx';
 import { BalanzaLoader } from './BalanzaLoader';
 
@@ -17,6 +17,17 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
     const [isSaving, setIsSaving] = useState(false);
     const [aiPrefilled, setAiPrefilled] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
+    const [errorMsg, setErrorMsg] = useState('');
+    const [retryCountdown, setRetryCountdown] = useState(0);
+    const [elapsedTime, setElapsedTime] = useState(0);
+    const lastPayload = useRef<{file?: File | null, text?: string} | null>(null);
+
+    useEffect(() => {
+        if (step !== 'analyzing' || errorMsg) return;
+        setElapsedTime(0);
+        const timer = setInterval(() => setElapsedTime(t => t + 1), 1000);
+        return () => clearInterval(timer);
+    }, [step, errorMsg]);
 
     // Input step state
     const [inputText, setInputText] = useState('');
@@ -52,6 +63,9 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
         setInputText('');
         setSelectedFile(null);
         setIsDragging(false);
+        setErrorMsg('');
+        setRetryCountdown(0);
+        setElapsedTime(0);
     };
 
     const applyAiResult = (data: Record<string, unknown>) => {
@@ -70,21 +84,28 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
 
     const handleAiAnalyze = async () => {
         if (!selectedFile && !inputText.trim()) return;
-
+        lastPayload.current = { file: selectedFile, text: selectedFile ? undefined : inputText.trim() };
         setStep('analyzing');
+        setErrorMsg('');
+        setRetryCountdown(0);
 
         try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 150000);
+
             const formData = new FormData();
-            if (selectedFile) {
-                formData.append('file', selectedFile);
-            } else {
-                formData.append('text', inputText.trim());
+            if (lastPayload.current.file) {
+                formData.append('file', lastPayload.current.file);
+            } else if (lastPayload.current.text) {
+                formData.append('text', lastPayload.current.text);
             }
 
             const res = await fetch('/api/normas/ai-parse', {
                 method: 'POST',
                 body: formData,
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
 
             if (res.ok) {
                 const data = await res.json();
@@ -92,16 +113,50 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
                 setAiPrefilled(true);
                 setStep('form');
             } else {
-                alert('Error al analizar con IA. Completá los campos manualmente.');
-                setAiPrefilled(false);
-                setStep('form');
+                const errData = await res.json().catch(() => ({ error: '' }));
+                let msg = 'Error al analizar el documento. Intentá de nuevo.';
+                if (res.status === 429) {
+                    msg = 'El servicio de IA está sobrecargado. Reintentando automáticamente...';
+                } else if (res.status === 502) {
+                    msg = 'La IA no pudo procesar el documento. Intentá con otro formato.';
+                } else if (errData.error?.includes('grande')) {
+                    msg = 'El archivo es demasiado grande para procesar.';
+                } else if (errData.error) {
+                    msg = errData.error;
+                }
+                setErrorMsg(msg);
+                if (res.status === 429) {
+                    let countdown = 15;
+                    setRetryCountdown(countdown);
+                    const interval = setInterval(() => {
+                        countdown--;
+                        setRetryCountdown(countdown);
+                        if (countdown <= 0) {
+                            clearInterval(interval);
+                            handleRetry();
+                        }
+                    }, 1000);
+                }
             }
-        } catch (error) {
-            console.error(error);
-            alert('Error de conexión con la IA. Completá los campos manualmente.');
-            setAiPrefilled(false);
-            setStep('form');
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                setErrorMsg('El análisis tardó demasiado. Intentá con un archivo más corto.');
+            } else {
+                setErrorMsg('Error de conexión. Verificá tu internet e intentá de nuevo.');
+            }
         }
+    };
+
+    const handleRetry = () => {
+        if (!lastPayload.current) return;
+        handleAiAnalyze();
+    };
+
+    const handleSkipToManual = () => {
+        setErrorMsg('');
+        setRetryCountdown(0);
+        setAiPrefilled(false);
+        setStep('form');
     };
 
     const handleSave = async (e: React.FormEvent) => {
@@ -341,19 +396,42 @@ export function UploadNormaModal({ isOpen, onClose, onSuccess }: UploadNormaModa
 
                             {/* ─── Step 2: Analyzing ─── */}
                             {step === 'analyzing' && (
-                                <motion.div
-                                    key="analyzing"
-                                    variants={stepVariants}
-                                    initial="initial"
-                                    animate="animate"
-                                    exit="exit"
-                                    transition={{ duration: 0.25, ease: 'easeInOut' }}
-                                    className="flex items-center justify-center py-16"
-                                >
-                                    <BalanzaLoader
-                                        size="lg"
-                                        text="La IA está analizando la normativa..."
-                                    />
+                                <motion.div key="analyzing" variants={stepVariants} initial="initial" animate="animate" exit="exit" className="flex flex-col items-center justify-center h-64 gap-4">
+                                    {!errorMsg ? (
+                                        <>
+                                            <BalanzaLoader size="lg" text="" />
+                                            <p className="text-sm font-medium text-stone-500">Analizando documento con IA...</p>
+                                            {elapsedTime > 90 && (
+                                                <p className="text-xs text-amber-600">Esto está tardando más de lo normal...</p>
+                                            )}
+                                            {elapsedTime > 0 && (
+                                                <p className="text-xs text-stone-400">⏱ {elapsedTime}s</p>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <div className="w-full space-y-4">
+                                            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                                                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                                                <div>
+                                                    <p className="text-sm font-medium text-amber-800">{errorMsg}</p>
+                                                    {retryCountdown > 0 && (
+                                                        <p className="text-xs text-amber-600 mt-1">Reintentando en {retryCountdown}s...</p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-center gap-3">
+                                                <button type="button" onClick={handleSkipToManual} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-xl text-sm font-medium transition-colors">
+                                                    Completar manualmente
+                                                </button>
+                                                {retryCountdown <= 0 && (
+                                                    <button type="button" onClick={handleRetry} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 transition-colors">
+                                                        <RefreshCw className="w-4 h-4" />
+                                                        Reintentar
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                 </motion.div>
                             )}
 

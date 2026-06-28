@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Sparkles, Upload, FileUp, ImageIcon } from 'lucide-react';
+import { X, Sparkles, Upload, FileUp, ImageIcon, AlertTriangle, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BalanzaLoader } from './BalanzaLoader';
 
@@ -23,6 +23,7 @@ const PROGRESS_STEPS = [
     { text: 'Leyendo documento...', delay: 0 },
     { text: 'Analizando con IA...', delay: 2000 },
     { text: 'Estructurando información...', delay: 5000 },
+    { text: 'Esto está tardando más de lo normal...', delay: 90000 },
 ];
 
 export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModalProps) {
@@ -51,6 +52,10 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
     const [isSaving, setIsSaving] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const [progressIndex, setProgressIndex] = useState(0);
+    const [errorMsg, setErrorMsg] = useState('');
+    const [retryCountdown, setRetryCountdown] = useState(0);
+    const [elapsedTime, setElapsedTime] = useState(0);
+    const lastPayload = React.useRef<{file?: File, text?: string} | null>(null);
 
     // Reset everything when opened
     useEffect(() => {
@@ -63,6 +68,7 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             setSubjectId(''); setCourt(''); setYear(''); setParties('');
             setTimeline([]); setCitations([]); setFullText('');
             setProgressIndex(0);
+            setErrorMsg(''); setRetryCountdown(0); setElapsedTime(0);
         }
     }, [isOpen]);
 
@@ -81,6 +87,13 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
 
         return () => timers.forEach(clearTimeout);
     }, [step]);
+
+    useEffect(() => {
+        if (step !== 'analyzing' || errorMsg) return;
+        setElapsedTime(0);
+        const timer = setInterval(() => setElapsedTime(t => t + 1), 1000);
+        return () => clearInterval(timer);
+    }, [step, errorMsg]);
 
     /** Populate all fields from the AI response and auto-select subject */
     const populateFromAI = useCallback((data: any, fallbackTitle?: string) => {
@@ -112,9 +125,15 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
 
     /** Unified analysis: sends file OR text to /api/documents/ai-analyze */
     const analyzeWithAI = async (payload: { file?: File; text?: string }) => {
+        lastPayload.current = payload;
         setStep('analyzing');
+        setErrorMsg('');
+        setRetryCountdown(0);
 
         try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 150000); // 2.5 min
+
             const formData = new FormData();
             if (payload.file) {
                 formData.append('file', payload.file);
@@ -125,12 +144,37 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             const res = await fetch('/api/documents/ai-analyze', {
                 method: 'POST',
                 body: formData,
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
 
             if (!res.ok) {
-                const errData = await res.json().catch(() => ({ error: 'Error desconocido' }));
-                alert(errData.error || 'Error al analizar el documento con IA.');
-                setStep('input');
+                const errData = await res.json().catch(() => ({ error: '' }));
+                let msg = 'Error al analizar el documento. Intentá de nuevo.';
+                if (res.status === 429) {
+                    msg = 'El servicio de IA está sobrecargado. Reintentando automáticamente...';
+                } else if (res.status === 502) {
+                    msg = 'La IA no pudo procesar el documento. Intentá con un archivo más corto o en otro formato.';
+                } else if (res.status === 413 || errData.error?.includes('grande')) {
+                    msg = 'El archivo es demasiado grande para procesar.';
+                } else if (errData.error) {
+                    msg = errData.error;
+                }
+                setErrorMsg(msg);
+
+                // Auto-retry on rate limit
+                if (res.status === 429) {
+                    let countdown = 15;
+                    setRetryCountdown(countdown);
+                    const interval = setInterval(() => {
+                        countdown--;
+                        setRetryCountdown(countdown);
+                        if (countdown <= 0) {
+                            clearInterval(interval);
+                            handleRetry();
+                        }
+                    }, 1000);
+                }
                 return;
             }
 
@@ -140,10 +184,18 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
                 : undefined;
             populateFromAI(data, fallbackTitle);
             setStep('review');
-        } catch (error) {
-            console.error('Analysis error:', error);
-            alert('Error al conectar con el servicio de IA. Verificá tu conexión e intentá de nuevo.');
-            setStep('input');
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                setErrorMsg('El análisis tardó demasiado. Intentá con un archivo más corto.');
+            } else {
+                setErrorMsg('Error de conexión. Verificá tu internet e intentá de nuevo.');
+            }
+        }
+    };
+
+    const handleRetry = () => {
+        if (lastPayload.current) {
+            analyzeWithAI(lastPayload.current);
         }
     };
 
@@ -333,20 +385,50 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
 
                         {/* ─── ANALYZING STEP ─── */}
                         {step === 'analyzing' && (
-                            <motion.div key="analyzing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col h-64 items-center justify-center gap-6">
-                                <BalanzaLoader size="lg" text="" />
-                                <AnimatePresence mode="wait">
-                                    <motion.p
-                                        key={progressIndex}
-                                        initial={{ opacity: 0, y: 8 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: -8 }}
-                                        transition={{ duration: 0.35 }}
-                                        className="text-sm font-medium text-stone-500"
-                                    >
-                                        {PROGRESS_STEPS[progressIndex].text}
-                                    </motion.p>
-                                </AnimatePresence>
+                            <motion.div key="analyzing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col h-64 items-center justify-center gap-4">
+                                {!errorMsg ? (
+                                    <>
+                                        <BalanzaLoader size="lg" text="" />
+                                        <AnimatePresence mode="wait">
+                                            <motion.p
+                                                key={progressIndex}
+                                                initial={{ opacity: 0, y: 8 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -8 }}
+                                                transition={{ duration: 0.35 }}
+                                                className="text-sm font-medium text-stone-500"
+                                            >
+                                                {PROGRESS_STEPS[progressIndex]?.text}
+                                            </motion.p>
+                                        </AnimatePresence>
+                                        {elapsedTime > 0 && (
+                                            <p className="text-xs text-stone-400">⏱ {elapsedTime}s</p>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="w-full space-y-4">
+                                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                                            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                                            <div>
+                                                <p className="text-sm font-medium text-amber-800">{errorMsg}</p>
+                                                {retryCountdown > 0 && (
+                                                    <p className="text-xs text-amber-600 mt-1">Reintentando en {retryCountdown}s...</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-center gap-3">
+                                            <button type="button" onClick={() => { setErrorMsg(''); setStep('input'); }} className="px-4 py-2 text-stone-600 hover:bg-stone-100 rounded-xl text-sm font-medium transition-colors">
+                                                Volver
+                                            </button>
+                                            {retryCountdown <= 0 && (
+                                                <button type="button" onClick={handleRetry} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 transition-colors">
+                                                    <RefreshCw className="w-4 h-4" />
+                                                    Reintentar
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </motion.div>
                         )}
 
