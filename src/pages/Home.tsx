@@ -49,7 +49,7 @@ const tools = [
     iconBg: 'bg-pink-100', iconColor: 'text-pink-600', hoverBg: 'group-hover:bg-pink-600', hoverGradient: 'from-pink-50',
   },
   {
-    to: '/chat', icon: MessageCircle, title: 'Chat Estudiantil', desc: 'Salas y mensajes directos.',
+    to: '/chat', icon: MessageCircle, title: 'Chat', desc: 'Salas y mensajes directos.',
     iconBg: 'bg-lime-100', iconColor: 'text-lime-600', hoverBg: 'group-hover:bg-lime-600', hoverGradient: 'from-lime-50',
   },
 ];

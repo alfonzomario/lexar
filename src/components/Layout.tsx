@@ -1,7 +1,7 @@
 import { Outlet } from 'react-router';
 import { Header } from './Header';
 import { Footer } from './Footer';
-import { PrivateNotesWidget } from './PrivateNotesWidget';
+import { NotificationWidget } from './NotificationWidget';
 
 export function Layout() {
   return (
@@ -11,7 +11,7 @@ export function Layout() {
         <Outlet />
       </main>
       <Footer />
-      <PrivateNotesWidget />
+      <NotificationWidget />
     </div>
   );
 }

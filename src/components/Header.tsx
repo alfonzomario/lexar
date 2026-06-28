@@ -94,7 +94,7 @@ export function Header() {
         { name: 'Artículos', path: '/articles', icon: Newspaper, description: 'Noticias y publicaciones' },
         { name: 'Bolsa de Empleo', path: '/jobs', icon: Briefcase, description: 'Oportunidades laborales' },
         { name: 'Cine Jurídico', path: '/movies', icon: Film, description: 'Recomendaciones de películas' },
-        { name: 'Chat Estudiantil', path: '/chat', icon: MessageCircle, description: 'Grupos y mensajes' },
+        { name: 'Chat', path: '/chat', icon: MessageCircle, description: 'Grupos y mensajes' },
       ]
     }
   ];

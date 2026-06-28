@@ -300,11 +300,11 @@ export function Chat() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden flex h-[700px]"
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="bg-white rounded-[2rem] shadow-sm border border-stone-200 overflow-hidden flex h-[750px] max-h-[85vh]"
     >
-      <div className="w-1/3 border-r border-stone-200 flex flex-col bg-stone-50 min-w-0">
+      <div className="w-1/4 min-w-[280px] max-w-[320px] border-r border-stone-200 flex flex-col bg-[#F8F9FA]">
         <div className="p-4 border-b border-stone-200 bg-white shrink-0">
           <h2 className="text-lg font-bold flex items-center gap-2 text-stone-900">
             <MessageCircle className="w-5 h-5 text-indigo-600" />
@@ -320,11 +320,11 @@ export function Chat() {
               key={room.id}
               onClick={() => { setSelectedUser(null); setSelectedRoom(room); }}
               className={clsx(
-                'w-full flex items-center gap-2 p-2.5 rounded-xl text-left text-sm',
-                selectedRoom?.id === room.id ? 'bg-indigo-100 text-indigo-800' : 'hover:bg-stone-100 text-stone-700'
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm font-medium transition-all duration-200',
+                selectedRoom?.id === room.id ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200' : 'hover:bg-stone-200/60 text-stone-600 hover:text-stone-900'
               )}
             >
-              <Hash className="w-4 h-4 shrink-0 text-stone-400" />
+              <Hash className={clsx("w-4 h-4 shrink-0", selectedRoom?.id === room.id ? "text-indigo-200" : "text-stone-400")} />
               <span className="truncate">{room.name}</span>
             </button>
           ))}
@@ -473,16 +473,16 @@ export function Chat() {
               )}
               <div ref={messagesEndRef} />
             </div>
-            <form onSubmit={sendRoomMessage} className="p-4 border-t border-stone-200 flex gap-2 shrink-0">
+            <form onSubmit={sendRoomMessage} className="p-4 bg-white border-t border-stone-100 flex gap-3 shrink-0 items-center">
               <input
                 type="text"
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Escribí en la sala..."
-                className="flex-1 bg-stone-100 border-0 focus:ring-2 focus:ring-indigo-200 rounded-xl px-4 py-3 outline-none"
+                placeholder="Escribí un mensaje..."
+                className="flex-1 bg-stone-100/70 border border-stone-200 focus:bg-white focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 rounded-full px-5 py-3.5 outline-none transition-all text-sm"
               />
-              <button type="submit" disabled={!newMessage.trim()} className="bg-indigo-600 text-white p-3 rounded-xl hover:bg-indigo-700 disabled:opacity-50 shrink-0">
-                <Send className="w-5 h-5" />
+              <button type="submit" disabled={!newMessage.trim()} className="bg-indigo-600 text-white p-3.5 rounded-full hover:bg-indigo-700 hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 transition-all shrink-0 shadow-sm shadow-indigo-200">
+                <Send className="w-5 h-5 ml-0.5" />
               </button>
             </form>
           </>
@@ -546,16 +546,16 @@ export function Chat() {
               )}
               <div ref={messagesEndRef} />
             </div>
-            <form onSubmit={sendDmMessage} className="p-4 border-t border-stone-200 flex gap-2 shrink-0">
+            <form onSubmit={sendDmMessage} className="p-4 bg-white border-t border-stone-100 flex gap-3 shrink-0 items-center">
               <input
                 type="text"
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Escribí un mensaje..."
-                className="flex-1 bg-stone-100 border-0 focus:ring-2 focus:ring-indigo-200 rounded-xl px-4 py-3 outline-none"
+                placeholder="Escribí un mensaje directo..."
+                className="flex-1 bg-stone-100/70 border border-stone-200 focus:bg-white focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 rounded-full px-5 py-3.5 outline-none transition-all text-sm"
               />
-              <button type="submit" disabled={!newMessage.trim()} className="bg-indigo-600 text-white p-3 rounded-xl hover:bg-indigo-700 disabled:opacity-50 shrink-0">
-                <Send className="w-5 h-5" />
+              <button type="submit" disabled={!newMessage.trim()} className="bg-indigo-600 text-white p-3.5 rounded-full hover:bg-indigo-700 hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 transition-all shrink-0 shadow-sm shadow-indigo-200">
+                <Send className="w-5 h-5 ml-0.5" />
               </button>
             </form>
           </>
