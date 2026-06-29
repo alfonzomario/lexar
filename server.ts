@@ -2,6 +2,7 @@ import 'dotenv/config';
 import path from 'path';
 import fs from 'fs';
 import express from 'express';
+import os from 'os';
 import multer from 'multer';
 import type { Request } from 'express';
 import { createServer as createViteServer } from 'vite';
@@ -1113,6 +1114,53 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
   "citations": [{ "norm_name": "...", "considerando_ref": "..." }]
 }`;
 
+  const prepareGeminiFileContent = async (
+    file: Express.Multer.File,
+    mimeType: string,
+    sizeInMb: number,
+    promptText: string
+  ): Promise<any[]> => {
+    // If the file is small, send it inline (faster, no API overhead)
+    if (sizeInMb <= 1.5) {
+      return [
+        { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+        { text: promptText }
+      ];
+    }
+
+    // For larger files, upload via File API using a temp file
+    let tempFilePath = '';
+    try {
+      console.log(`[Upload] Usando File API para archivo grande (${sizeInMb.toFixed(1)}MB)...`);
+      const sanitizedName = (file.originalname || 'document').replace(/[^a-zA-Z0-9.-]/g, '_');
+      tempFilePath = path.join(os.tmpdir(), `lexar-upload-${Date.now()}-${sanitizedName}`);
+      await fs.promises.writeFile(tempFilePath, file.buffer);
+
+      const ai = getGeminiClient();
+      const uploadedFile = await ai.files.upload({
+        file: tempFilePath,
+        config: { mimeType },
+      });
+
+      return [
+        { fileData: { fileUri: uploadedFile.uri, mimeType } },
+        { text: promptText }
+      ];
+    } catch (err) {
+      console.error('[Upload] File API falló, cayendo a inlineData:', err);
+      return [
+        { inlineData: { mimeType, data: file.buffer.toString('base64') } },
+        { text: promptText }
+      ];
+    } finally {
+      if (tempFilePath) {
+        try {
+          await fs.promises.unlink(tempFilePath);
+        } catch (e) {}
+      }
+    }
+  };
+
   // --- Unified AI Document Analysis Endpoint ---
   // Sends PDF/images DIRECTLY to Gemini as inlineData for much better extraction
   app.post('/api/documents/ai-analyze', upload.single('file'), async (req: Request & { file?: Express.Multer.File }, res) => {
@@ -1190,36 +1238,16 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
               { text: systemPrompt + '\n\nTEXTO DEL DOCUMENTO A ANALIZAR:\n---\n' + safeText + '\n---' }
             ];
           } else {
-            console.log(`[Upload] PDF escaneado (texto pobre: ${extractedText.length} chars) | Enviando como imagen`);
+            console.log(`[Upload] PDF escaneado (texto pobre: ${extractedText.length} chars) | Procesando...`);
             if (sizeInMb > 15) {
               return res.status(400).json({ error: 'El archivo PDF es escaneado (sin texto copiable) y demasiado grande para procesar (>15MB). Por favor, subí un documento con texto copiable o más corto.' });
             }
-            // Para PDFs escaneados grandes (>5MB), usar File API
-            if (sizeInMb > 5) {
-              try {
-                console.log('[Upload] Usando File API para PDF escaneado grande...');
-                const ai = getGeminiClient();
-                const uploadedFile = await ai.files.upload({
-                  file: new Blob([file.buffer], { type: mimeType }),
-                  config: { mimeType },
-                });
-                contentParts = [
-                  { fileData: { fileUri: uploadedFile.uri, mimeType } },
-                  { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
-                ];
-              } catch (fileApiErr) {
-                console.error('[Upload] File API falló, cayendo a inlineData:', fileApiErr);
-                contentParts = [
-                  { inlineData: { mimeType, data: file.buffer.toString('base64') } },
-                  { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
-                ];
-              }
-            } else {
-              contentParts = [
-                { inlineData: { mimeType, data: file.buffer.toString('base64') } },
-                { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
-              ];
-            }
+            contentParts = await prepareGeminiFileContent(
+              file,
+              mimeType,
+              sizeInMb,
+              systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.'
+            );
           }
         } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || mimeType === 'application/msword') {
           // --- DOCX/DOC Processing with mammoth ---
@@ -1245,19 +1273,23 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
             ];
           } else {
             // Poco texto → enviar como binario a Gemini (fallback)
-            console.log('[Upload] Poco texto extraído de Word, enviando como inlineData');
-            contentParts = [
-              { inlineData: { mimeType, data: file.buffer.toString('base64') } },
-              { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
-            ];
+            console.log('[Upload] Poco texto extraído de Word, enviando como archivo/imagen');
+            contentParts = await prepareGeminiFileContent(
+              file,
+              mimeType,
+              sizeInMb,
+              systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.'
+            );
           }
         } else {
           // --- Image Processing ---
           console.log(`[Upload] Imagen recibida: ${mimeType}`);
-          contentParts = [
-            { inlineData: { mimeType, data: file.buffer.toString('base64') } },
-            { text: systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.' }
-          ];
+          contentParts = await prepareGeminiFileContent(
+            file,
+            mimeType,
+            sizeInMb,
+            systemPrompt + '\n\nAnalizá el documento adjunto y extraé la información estructurada.'
+          );
         }
       } else {
         // Text input mode
