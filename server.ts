@@ -132,7 +132,7 @@ async function startServer() {
   };
 
   let currentApiKeyIndex = 0;
-  const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 
   const parseGeminiKeys = (): string[] => {
     const rawKeys = process.env.GEMINI_API_KEY || '';
@@ -1286,7 +1286,7 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
       if (e?.message?.includes('429') || e?.message?.includes('quota') || e?.message?.includes('RESOURCE_EXHAUSTED')) {
         return res.status(429).json({ error: 'Se superó la cuota de la IA. Esperá unos minutos e intentá de nuevo.' });
       }
-      res.status(500).json({ error: 'Error al analizar el documento con IA. Intentá de nuevo.' });
+      res.status(500).json({ error: `Error de Google IA: ${e?.message || e}` });
     }
   });
 
