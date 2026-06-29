@@ -86,7 +86,7 @@ async function startServer() {
   httpServer.setTimeout(210_000);
 
   // Multer for PDF uploads (max 20MB, memory storage)
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
   const io = new Server(httpServer, {
     cors: { origin: '*' }
   });
@@ -1250,7 +1250,7 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
             ];
           } else {
             console.log(`[Upload] PDF escaneado (texto pobre: ${extractedText.length} chars) | Procesando...`);
-            if (sizeInMb > 15) {
+            if (sizeInMb > 40) {
               return res.status(400).json({ error: 'El archivo PDF es escaneado (sin texto copiable) y demasiado grande para procesar (>15MB). Por favor, subí un documento con texto copiable o más corto.' });
             }
             contentParts = await prepareGeminiFileContent(
@@ -1463,7 +1463,7 @@ Respondé SOLO con JSON válido:
               { text: normaPrompt + '\n\nTEXTO DE LA NORMA A ANALIZAR:\n---\n' + safeText + '\n---' }
             ];
           } else {
-            if (sizeInMb > 15) {
+            if (sizeInMb > 40) {
               return res.status(400).json({ error: 'El archivo PDF es escaneado y demasiado grande (>15MB). Por favor, subí un documento con texto copiable o más corto.' });
             }
             console.log('[Upload Norma] PDF escaneado, enviando como imagen');

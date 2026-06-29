@@ -132,7 +132,7 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
 
         try {
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 150000); // 2.5 min
+            const timeout = setTimeout(() => controller.abort(), 300000); // 5 min
 
             const formData = new FormData();
             if (payload.file) {
@@ -209,8 +209,8 @@ export function UploadBriefModal({ isOpen, onClose, onSuccess }: UploadBriefModa
             alert('Formato no soportado. Aceptamos PDF, DOCX, JPG, PNG y WEBP.');
             return;
         }
-        if (file.size > 20 * 1024 * 1024) {
-            alert('El archivo es demasiado grande (máximo 20MB)');
+        if (file.size > 50 * 1024 * 1024) {
+            alert('El archivo es demasiado grande (máximo 50MB)');
             return;
         }
         analyzeWithAI({ file });
