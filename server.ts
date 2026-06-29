@@ -1545,7 +1545,12 @@ Respondé SOLO con JSON válido:
 
   // Create new Case Brief
   app.post('/api/briefs', (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Debes iniciar sesión' });
+    const u = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    if (!u || (u.tier !== 'pro' && u.tier !== 'admin' && u.tier !== 'super_admin')) {
+      return res.status(403).json({ error: 'Solo usuarios Pro pueden subir fallos' });
+    }
     const { title, facts, issue, rule, reasoning, holding, dissents, relevance, keywords, subject_id, court, year, parties, timeline, citations, full_text } = req.body;
 
     if (!title || !subject_id) {
