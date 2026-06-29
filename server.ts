@@ -120,6 +120,20 @@ async function startServer() {
     return { userId };
   };
 
+  const requireAdmin = (req: express.Request, res: express.Response): { userId: number } | null => {
+    const userId = getUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: 'Usuario no identificado' });
+      return null;
+    }
+    const user = db.prepare('SELECT tier FROM users WHERE id = ?').get(userId) as { tier: string } | undefined;
+    if (!user || (user.tier !== 'super_admin' && user.tier !== 'admin')) {
+      res.status(403).json({ error: 'Solo administradores pueden realizar esta acción' });
+      return null;
+    }
+    return { userId };
+  };
+
   const applyImpactTierUpgrade = (authorId: number) => {
     const user = db.prepare('SELECT id, tier, total_views, total_votes_received FROM users WHERE id = ?').get(authorId) as { id: number; tier: string; total_views: number; total_votes_received: number } | undefined;
     if (!user || user.tier === 'super_admin') return;
@@ -519,7 +533,7 @@ async function startServer() {
   });
 
   app.post('/api/subjects', async (req, res) => {
-    const auth = requireSuperAdmin(req, res);
+    const auth = requireAdmin(req, res);
     if (!auth) return;
     const { name, description, icon } = req.body;
     if (!name || typeof name !== 'string') {
@@ -1488,7 +1502,7 @@ Respondé SOLO con JSON válido:
 
   // Create new Case Brief
   app.post('/api/briefs', (req, res) => {
-    if (!requireSuperAdmin(req, res)) return;
+    if (!requireAdmin(req, res)) return;
     const { title, facts, issue, rule, reasoning, holding, dissents, relevance, keywords, subject_id, court, year, parties, timeline, citations, full_text } = req.body;
 
     if (!title || !subject_id) {
