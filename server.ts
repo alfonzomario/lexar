@@ -171,57 +171,68 @@ async function startServer() {
     }
   };
 
-  // --- Gemini helper (UNIFICADO) con retry robusto y backoff exponencial ---
+  // --- Cadena de modelos de respaldo ---
+  const FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+
+  // --- Gemini helper (UNIFICADO) con retry robusto, backoff exponencial y fallback de modelos ---
   const callGeminiWithRetry = async (
     params: { model: string; contents: any; config?: any },
-    maxRetries = 3
+    maxRetries = 2
   ): Promise<any> => {
     const keys = parseGeminiKeys();
     if (keys.length === 0) {
       throw new Error('IA no configurada. Agregá GEMINI_API_KEY en tu configuración.');
     }
 
+    // Build the list of models to try: primary model first, then fallbacks
+    const modelsToTry = [params.model, ...FALLBACK_MODELS.filter(m => m !== params.model)];
     let lastError: any = null;
-    const totalAttempts = Math.max(keys.length, maxRetries);
 
-    for (let attempt = 0; attempt < totalAttempts; attempt++) {
-      const ai = getGeminiClient();
-      try {
-        // Timeout de 2.5 minutos por intento (para archivos pesados)
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 150_000);
+    for (const currentModel of modelsToTry) {
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        const ai = getGeminiClient();
+        try {
+          const timeout = setTimeout(() => {}, 150_000);
+          const result = await ai.models.generateContent({
+            ...params,
+            model: currentModel,
+          });
+          clearTimeout(timeout);
+          if (currentModel !== params.model) {
+            console.warn(`[Gemini] ✓ Éxito con modelo de respaldo: ${currentModel}`);
+          }
+          return result;
+        } catch (err: any) {
+          lastError = err;
+          const errMsg = err?.message || String(err);
+          console.error(`[Gemini] Modelo ${currentModel} intento ${attempt + 1}/${maxRetries} falló:`, errMsg);
 
-        const result = await ai.models.generateContent(params);
-        clearTimeout(timeout);
-        return result;
-      } catch (err: any) {
-        lastError = err;
-        const errMsg = err?.message || String(err);
-        console.error(`[Gemini] Intento ${attempt + 1}/${totalAttempts} falló:`, errMsg);
+          // Rotar keys si hay múltiples
+          if (keys.length > 1) {
+            rotateGeminiKey();
+          }
 
-        // Rotar keys si hay múltiples
-        if (keys.length > 1) {
-          rotateGeminiKey();
-        }
+          const isRateLimit = errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED');
+          const isServerError = errMsg.includes('500') || errMsg.includes('503') || errMsg.includes('INTERNAL') || errMsg.includes('UNAVAILABLE');
+          const isRetryable = isRateLimit || isServerError;
 
-        const isRateLimit = errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED');
-        const isServerError = errMsg.includes('500') || errMsg.includes('503') || errMsg.includes('INTERNAL');
-        const isRetryable = isRateLimit || isServerError;
+          if (!isRetryable) {
+            // Non-retryable error (e.g. bad request, auth error) → don't try other models either
+            throw lastError;
+          }
 
-        if (!isRetryable) {
-          break;
-        }
-
-        if (attempt < totalAttempts - 1) {
-          // Backoff exponencial: 3s, 9s, 27s
-          const baseDelay = isRateLimit ? 5000 : 3000;
-          const delay = baseDelay * Math.pow(3, attempt);
-          console.warn(`[Gemini] Reintentando en ${delay / 1000}s...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          if (attempt < maxRetries - 1) {
+            const baseDelay = isRateLimit ? 4000 : 2000;
+            const delay = baseDelay * Math.pow(2, attempt);
+            console.warn(`[Gemini] Reintentando ${currentModel} en ${delay / 1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
         }
       }
+      // All retries for this model exhausted, try next model
+      console.warn(`[Gemini] Modelo ${currentModel} agotado. Probando siguiente modelo de respaldo...`);
     }
-    throw lastError || new Error('Todos los intentos de Gemini fallaron');
+    throw lastError || new Error('Todos los modelos e intentos de Gemini fallaron');
   };
 
   // Router /api que recibe primero los DELETE (evita que Vite u otro middleware devuelva 404)
