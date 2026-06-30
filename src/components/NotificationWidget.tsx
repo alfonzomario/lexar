@@ -1,59 +1,97 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, MessageCircle, MessageSquare } from 'lucide-react';
+import { Bell, MessageCircle, MessageSquare, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate, useLocation } from 'react-router';
 import { clsx } from 'clsx';
+import { io } from 'socket.io-client';
+import { useAuth } from '../contexts/AuthContext';
 
 type Notification = {
   id: string;
-  type: 'dm' | 'forum';
+  type: 'dm' | 'forum' | 'comment' | 'system';
   title: string;
   message: string;
-  time: string;
-  read: boolean;
   link: string;
+  is_read: number;
+  created_at: string;
 };
 
-// Dummy notifications for UI demonstration
-const MOCK_NOTIFICATIONS: Notification[] = [
-  {
-    id: '1',
-    type: 'dm',
-    title: 'Nuevo mensaje de Dimas Bosch',
-    message: 'Hola, ¿pudiste revisar el fallo de la clase anterior?',
-    time: 'Hace 5 min',
-    read: false,
-    link: '/chat'
-  },
-  {
-    id: '2',
-    type: 'forum',
-    title: 'Respuesta en el foro',
-    message: 'Alguien respondió a tu duda sobre Derecho Penal.',
-    time: 'Hace 1 hora',
-    read: true,
-    link: '/forum'
+const formatTime = (isoString: string) => {
+  try {
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+
+    if (diffMins < 1) return 'Ahora';
+    if (diffMins < 60) return `Hace ${diffMins} min`;
+    if (diffHours < 24) return `Hace ${diffHours} ${diffHours === 1 ? 'hora' : 'horas'}`;
+    return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  } catch {
+    return 'Hace un momento';
   }
-];
+};
 
 export function NotificationWidget() {
+  const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>(MOCK_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const location = useLocation();
   const navigate = useNavigate();
 
-  // If we are in BriefDetail or NormaDetail, we might have the AI widget visible at right-6 (24px).
-  // So we move the bell to right-22 (88px) to coexist side-by-side.
   const isDocDetail = location.pathname.startsWith('/briefs/') || location.pathname.startsWith('/normativa/');
+  const unreadCount = notifications.filter(n => !n.is_read).length;
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  useEffect(() => {
+    if (!user) return;
 
-  const handleNotificationClick = (notif: Notification) => {
-    // Mark as read
-    setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+    // Fetch initial list
+    fetch('/api/notifications')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setNotifications(data);
+        }
+      })
+      .catch(() => {});
+
+    // Setup Socket
+    const socket = io();
+    socket.emit('join', user.id);
+
+    socket.on('new_notification', (newNotif: Notification) => {
+      setNotifications(prev => [newNotif, ...prev]);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [user]);
+
+  const handleNotificationClick = async (notif: Notification) => {
+    if (!notif.is_read) {
+      try {
+        await fetch(`/api/notifications/${notif.id}/read`, { method: 'POST' });
+        setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, is_read: 1 } : n));
+      } catch (e) {
+        console.error('Error marking read:', e);
+      }
+    }
     setIsOpen(false);
     navigate(notif.link);
   };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await fetch('/api/notifications/read-all', { method: 'POST' });
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
+    } catch (e) {
+      console.error('Error marking all read:', e);
+    }
+  };
+
+  if (!user) return null;
 
   return (
     <div 
@@ -77,11 +115,21 @@ export function NotificationWidget() {
                 <Bell className="w-4 h-4 text-indigo-600" />
                 Notificaciones
               </h3>
-              {unreadCount > 0 && (
-                <span className="bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  {unreadCount} nuevas
-                </span>
-              )}
+              <div className="flex gap-2">
+                {unreadCount > 0 && (
+                  <button 
+                    onClick={handleMarkAllRead}
+                    className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold"
+                  >
+                    Marcar todas
+                  </button>
+                )}
+                {unreadCount > 0 && (
+                  <span className="bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    {unreadCount}
+                  </span>
+                )}
+              </div>
             </div>
             
             <div className="max-h-80 overflow-y-auto">
@@ -98,23 +146,27 @@ export function NotificationWidget() {
                       onClick={() => handleNotificationClick(notif)}
                       className={clsx(
                         "text-left p-4 hover:bg-stone-50 border-b border-stone-50 last:border-0 transition-colors flex gap-3",
-                        !notif.read ? "bg-indigo-50/30" : "bg-white"
+                        !notif.is_read ? "bg-indigo-50/30" : "bg-white"
                       )}
                     >
                       <div className={clsx(
                         "w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5",
-                        notif.type === 'dm' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
+                        notif.type === 'dm' ? 'bg-emerald-100 text-emerald-600' :
+                        notif.type === 'forum' ? 'bg-blue-100 text-blue-600' :
+                        'bg-purple-100 text-purple-600'
                       )}>
-                        {notif.type === 'dm' ? <MessageCircle className="w-4 h-4" /> : <MessageSquare className="w-4 h-4" />}
+                        {notif.type === 'dm' ? <MessageCircle className="w-4 h-4" /> :
+                         notif.type === 'forum' ? <MessageSquare className="w-4 h-4" /> :
+                         <BookOpen className="w-4 h-4" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className={clsx("text-sm truncate", !notif.read ? "font-bold text-stone-900" : "font-medium text-stone-700")}>
+                        <p className={clsx("text-sm truncate", !notif.is_read ? "font-bold text-stone-900" : "font-medium text-stone-700")}>
                           {notif.title}
                         </p>
                         <p className="text-xs text-stone-500 line-clamp-2 mt-0.5">{notif.message}</p>
-                        <p className="text-[10px] text-stone-400 mt-1">{notif.time}</p>
+                        <p className="text-[10px] text-stone-400 mt-1">{formatTime(notif.created_at)}</p>
                       </div>
-                      {!notif.read && (
+                      {!notif.is_read && (
                         <div className="w-2 h-2 rounded-full bg-indigo-500 shrink-0 mt-2" />
                       )}
                     </button>
@@ -133,7 +185,7 @@ export function NotificationWidget() {
       >
         <Bell className="w-6 h-6 group-hover:text-indigo-600 transition-colors" />
         {unreadCount > 0 && (
-          <span className="absolute top-0 right-0 translate-x-1/4 -translate-y-1/4 bg-rose-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white shadow-sm">
+          <span className="absolute top-0 right-0 translate-x-1/4 -translate-y-1/4 bg-rose-500 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full border-2 border-white shadow-sm animate-bounce">
             {unreadCount}
           </span>
         )}

@@ -146,6 +146,66 @@ async function startServer() {
     }
   };
 
+  const createNotification = (
+    userId: number,
+    type: 'dm' | 'forum' | 'comment' | 'system',
+    title: string,
+    message: string,
+    link: string
+  ) => {
+    const timestamp = new Date().toISOString();
+    try {
+      const result = db.prepare(`
+        INSERT INTO notifications (user_id, type, title, message, link, is_read, created_at)
+        VALUES (?, ?, ?, ?, ?, 0, ?)
+      `).run(userId, type, title, message, link, timestamp);
+
+      const newNotif = {
+        id: result.lastInsertRowid,
+        user_id: userId,
+        type,
+        title,
+        message,
+        link,
+        is_read: 0,
+        created_at: timestamp
+      };
+
+      // Autolimpieza: Borrar notificaciones leídas de más de 30 días de antigüedad
+      db.prepare(`
+        DELETE FROM notifications 
+        WHERE user_id = ? AND is_read = 1 AND created_at < datetime('now', '-30 days')
+      `).run(userId);
+
+      // Limitar a un máximo de 100 notificaciones por usuario
+      const countRow = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE user_id = ?').get(userId) as { count: number } | undefined;
+      if (countRow && countRow.count > 100) {
+        const excess = countRow.count - 100;
+        db.prepare(`
+          DELETE FROM notifications 
+          WHERE id IN (
+            SELECT id FROM notifications 
+            WHERE user_id = ? 
+            ORDER BY created_at ASC 
+            LIMIT ?
+          )
+        `).run(userId, excess);
+      }
+
+      // Emitir por WebSocket
+      const receiverSockets = onlineUsers.get(Number(userId));
+      if (receiverSockets) {
+        receiverSockets.forEach(socketId => {
+          io.to(socketId).emit('new_notification', newNotif);
+        });
+      }
+      return newNotif;
+    } catch (e) {
+      console.error('Error creating notification:', e);
+      return null;
+    }
+  };
+
   let currentApiKeyIndex = 0;
   const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 
@@ -2042,15 +2102,29 @@ Respondé SOLO con JSON válido:
     const topicId = req.params.id;
     const { content } = req.body;
     if (!content || typeof content !== 'string' || !content.trim()) return res.status(400).json({ error: 'Contenido obligatorio' });
-    const topic = db.prepare('SELECT id FROM forum_topics WHERE id = ?').get(topicId);
+    
+    const topic = db.prepare('SELECT id, author_id, title FROM forum_topics WHERE id = ?').get(topicId) as { id: number; author_id: number; title: string } | undefined;
     if (!topic) return res.status(404).json({ error: 'Tema no encontrado' });
+    
     const now = new Date().toISOString();
     try {
       const result = db.prepare(
         'INSERT INTO forum_replies (topic_id, author_id, content, created_at) VALUES (?, ?, ?, ?)'
       ).run(topicId, userId, content.trim(), now);
       db.prepare('UPDATE forum_topics SET updated_at = ? WHERE id = ?').run(now, topicId);
+      
       const user = db.prepare('SELECT name, profile_role FROM users WHERE id = ?').get(userId) as any;
+
+      if (topic.author_id !== userId) {
+        createNotification(
+          topic.author_id,
+          'forum',
+          `Respuesta en tu foro: ${topic.title}`,
+          `${user?.name ?? 'Un usuario'} respondió: "${content.trim()}"`,
+          `/forum?topicId=${topicId}`
+        );
+      }
+
       res.status(201).json({ success: true, id: result.lastInsertRowid, author_name: user?.name, author_role: user?.profile_role });
     } catch (e) {
       console.error('Error creating reply:', e);
@@ -2185,8 +2259,47 @@ Respondé SOLO con JSON válido:
         'INSERT INTO comments (user_id, resource_type, resource_id, content, created_at) VALUES (?, ?, ?, ?, ?)'
       ).run(userId, resourceType, Number(resourceId), content.trim(), now);
       const user = db.prepare('SELECT name, profile_role FROM users WHERE id = ?').get(userId) as any;
+
+      // Notify resource author if applicable
+      let resourceAuthorId: number | null = null;
+      let resourceTitle = '';
+      let link = '';
+      if (resourceType === 'note') {
+        const row = db.prepare('SELECT author_id, title FROM student_notes WHERE id = ?').get(resourceId) as { author_id: number; title: string } | undefined;
+        if (row) {
+          resourceAuthorId = row.author_id;
+          resourceTitle = row.title;
+          link = `/notes`;
+        }
+      } else if (resourceType === 'exam') {
+        const row = db.prepare('SELECT uploaded_by, title FROM exams WHERE id = ?').get(resourceId) as { uploaded_by: number; title: string } | undefined;
+        if (row) {
+          resourceAuthorId = row.uploaded_by;
+          resourceTitle = row.title;
+          link = `/exams`;
+        }
+      } else if (resourceType === 'article') {
+        const row = db.prepare('SELECT author_id, title FROM articles WHERE id = ?').get(resourceId) as { author_id: number; title: string } | undefined;
+        if (row) {
+          resourceAuthorId = row.author_id;
+          resourceTitle = row.title;
+          link = `/articles`;
+        }
+      }
+
+      if (resourceAuthorId && resourceAuthorId !== userId) {
+        createNotification(
+          resourceAuthorId,
+          'comment',
+          `Nuevo comentario en tu publicación`,
+          `${user?.name ?? 'Un usuario'} comentó: "${content.trim()}"`,
+          link
+        );
+      }
+
       res.status(201).json({ success: true, id: result.lastInsertRowid, author_name: user?.name, author_role: user?.profile_role });
     } catch (e) {
+      console.error(e);
       res.status(500).json({ error: 'Error al comentar' });
     }
   });
@@ -3590,10 +3703,65 @@ Respondé SOLO con JSON válido:
         });
       }
 
+      const senderName = db.prepare('SELECT name FROM users WHERE id = ?').get(senderId) as { name: string } | undefined;
+      createNotification(
+        Number(receiverId),
+        'dm',
+        `Nuevo recurso compartido por ${senderName?.name ?? 'Usuario'}`,
+        `Te compartió el fallo: ${title}`,
+        `/chat`
+      );
+
       res.json({ success: true, message: newMessage });
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: 'Error al compartir el fallo' });
+    }
+  });
+
+  // --- Notifications Routes ---
+  app.get('/api/notifications', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
+    try {
+      const notifications = db.prepare(`
+        SELECT * FROM notifications 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC 
+        LIMIT 50
+      `).all(userId);
+      res.json(notifications);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al obtener notificaciones' });
+    }
+  });
+
+  app.post('/api/notifications/:id/read', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+    const { id } = req.params;
+
+    try {
+      db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(id, userId);
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al marcar la notificación como leída' });
+    }
+  });
+
+  app.post('/api/notifications/read-all', (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
+
+    try {
+      db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ?').run(userId);
+      res.json({ success: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al marcar todas las notificaciones como leídas' });
     }
   });
 
@@ -3670,6 +3838,20 @@ Respondé SOLO con JSON válido:
         timestamp,
       };
       io.to(`room_${room_id}`).emit('room_message', newMessage);
+
+      // Check for @mentions of users
+      const allUsers = db.prepare('SELECT id, name FROM users').all() as { id: number; name: string }[];
+      allUsers.forEach(targetUser => {
+        if (targetUser.id !== user_id && content.toLowerCase().includes(`@${targetUser.name.toLowerCase()}`)) {
+          createNotification(
+            targetUser.id,
+            'comment',
+            `Mención en sala de chat`,
+            `${user?.name ?? 'Usuario'} te mencionó: "${content.trim()}"`,
+            `/chat`
+          );
+        }
+      });
     });
 
     socket.on('send_message', (data) => {
@@ -3692,6 +3874,15 @@ Respondé SOLO con JSON válido:
 
       io.to(`user_${receiver_id}`).emit('receive_message', newMessage);
       io.to(`user_${sender_id}`).emit('receive_message', newMessage);
+
+      const senderName = db.prepare('SELECT name FROM users WHERE id = ?').get(sender_id) as { name: string } | undefined;
+      createNotification(
+        Number(receiver_id),
+        'dm',
+        `Nuevo mensaje de ${senderName?.name ?? 'Usuario'}`,
+        content.length > 60 ? content.slice(0, 60) + '...' : content,
+        '/chat'
+      );
     });
 
     socket.on('disconnect', () => {

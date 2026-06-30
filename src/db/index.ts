@@ -484,6 +484,25 @@ function initDb() {
     )
   `);
 
+  // Tabla notificaciones (real-time) con autolimpieza
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      type TEXT NOT NULL, -- 'dm', 'forum', 'comment', 'system'
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      link TEXT NOT NULL,
+      is_read INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read)`);
+
+
   // Migration: Move subject_id from case_briefs to case_brief_subjects
   const briefsWithSubject = db.prepare('SELECT id, subject_id FROM case_briefs WHERE subject_id IS NOT NULL').all() as any[];
   if (briefsWithSubject.length > 0) {
