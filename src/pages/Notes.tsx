@@ -791,7 +791,7 @@ export function Notes() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg bg-white rounded-3xl shadow-2xl z-50 overflow-hidden"
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-lg bg-white rounded-3xl shadow-2xl z-50 overflow-hidden flex flex-col max-h-[90vh]"
             >
               <div className="flex items-center justify-between p-6 border-b border-stone-100 bg-stone-50/50">
                 <h2 className="text-xl font-bold flex items-center gap-2 text-stone-900" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
@@ -808,7 +808,8 @@ export function Notes() {
                 </button>
               </div>
 
-              <form onSubmit={handleUploadSubmit} className="p-6 space-y-5">
+              <form onSubmit={handleUploadSubmit} className="flex flex-col overflow-hidden min-h-0">
+                <div className="p-6 space-y-5 overflow-y-auto custom-scrollbar">
                 {submitError && (
                   <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm font-medium border border-red-100">
                     {submitError}
@@ -947,8 +948,10 @@ export function Notes() {
                   ></textarea>
                 </div>
 
+                </div>
+
                 {/* Actions */}
-                <div className="pt-4 flex gap-3">
+                <div className="p-6 border-t border-stone-100 bg-stone-50/50 flex gap-3 shrink-0">
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}

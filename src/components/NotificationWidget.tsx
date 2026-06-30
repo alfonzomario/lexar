@@ -58,7 +58,7 @@ export function NotificationWidget() {
   return (
     <div 
       className={clsx(
-        "fixed bottom-6 z-[1000] transition-all duration-300",
+        "fixed bottom-6 z-40 transition-all duration-300",
         isDocDetail ? "right-[88px]" : "right-6"
       )}
     >
