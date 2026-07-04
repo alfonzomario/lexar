@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { UserRoleBadge } from '../components/UserRoleBadge';
-import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2, School, Calendar, Filter, ChevronDown, GraduationCap, ThumbsUp, ThumbsDown, Bookmark, Send, PencilLine, Trash2 } from 'lucide-react';
+import { FileText, Eye, Download, Search, Upload, Lock, User, X, ExternalLink, Crown, Loader2, School, Calendar, Filter, ChevronDown, GraduationCap, ThumbsUp, ThumbsDown, Bookmark, Send, PencilLine, Trash2, FileUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { useAuth } from '../contexts/AuthContext';
@@ -20,8 +20,17 @@ function extractDriveId(url: string): string | null {
   return match ? match[1] : null;
 }
 
-/** Returns the embeddable preview URL for a Google Drive doc */
+/** Returns the embeddable preview URL for a Google Drive doc or local files */
 function toPreviewUrl(url: string): string | null {
+  if (!url) return null;
+  if (!isGoogleDriveUrl(url)) {
+    // If it's a PDF or image, it is previewable directly
+    const ext = url.split('.').pop()?.toLowerCase();
+    if (ext === 'pdf' || ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext || '')) {
+      return url;
+    }
+    return null; // Not directly previewable in iframe (like Word doc)
+  }
   const id = extractDriveId(url);
   if (!id) return null;
 
@@ -35,6 +44,10 @@ function toPreviewUrl(url: string): string | null {
 
 /** Returns a direct download/export URL */
 function toDownloadUrl(url: string): string | null {
+  if (!url) return null;
+  if (!isGoogleDriveUrl(url)) {
+    return url; // Local path itself
+  }
   const id = extractDriveId(url);
   if (!id) return null;
 
@@ -53,6 +66,11 @@ export function Notes() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [uploadMethod, setUploadMethod] = useState<'drive' | 'file'>('drive');
+  const [localFile, setLocalFile] = useState<File | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitError, setSubmitError] = useState('');
 
   // Filters
@@ -249,6 +267,8 @@ export function Notes() {
     },
     onSuccess: () => {
       setNewNote({ title: '', file_url: '', description: '', subject_id: '', university_id: '', year: '', chair_name: '', profesor: '' });
+      setLocalFile(null);
+      setUploadMethod('drive');
       setIsModalOpen(false);
       queryClient.invalidateQueries({ queryKey: ['notes'] });
     },
@@ -257,19 +277,83 @@ export function Notes() {
     }
   });
 
-  const handleUploadSubmit = (e: React.FormEvent) => {
+  // Drag & Drop Handlers for local notes files
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      setLocalFile(file);
+      setSubmitError('');
+    }
+  }, []);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setLocalFile(file);
+      setSubmitError('');
+    }
+  };
+
+  const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError('');
 
-    // Validate Google Drive URL
-    if (!isGoogleDriveUrl(newNote.file_url)) {
-      setSubmitError('Por favor, pegá un link válido de Google Drive (docs.google.com o drive.google.com)');
-      return;
+    let finalFileUrl = newNote.file_url;
+
+    if (uploadMethod === 'file') {
+      if (!localFile) {
+        setSubmitError('Por favor, seleccioná un archivo para subir.');
+        return;
+      }
+      setIsUploadingFile(true);
+      try {
+        const formData = new FormData();
+        formData.append('file', localFile);
+        const uploadRes = await fetch('/api/notes/upload-file', {
+          method: 'POST',
+          headers: {
+            ...(user ? { 'X-User-Id': String(user.id) } : {}),
+          },
+          body: formData,
+        });
+        if (!uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          throw new Error(uploadData.error || 'Error al subir el archivo');
+        }
+        const { fileUrl } = await uploadRes.json();
+        finalFileUrl = fileUrl;
+      } catch (err: any) {
+        setIsUploadingFile(false);
+        setSubmitError(err.message || 'Error de red al subir el archivo.');
+        return;
+      }
+      setIsUploadingFile(false);
+    } else {
+      // Validate Google Drive URL
+      if (!isGoogleDriveUrl(finalFileUrl)) {
+        setSubmitError('Por favor, pegá un link válido de Google Drive (docs.google.com o drive.google.com)');
+        return;
+      }
     }
 
     uploadNoteMutation.mutate({
       title: newNote.title,
-      file_url: newNote.file_url,
+      file_url: finalFileUrl,
       description: newNote.description,
       subject_id: newNote.subject_id,
       university_id: newNote.university_id || null,
@@ -469,7 +553,12 @@ export function Notes() {
         </div>
         <div className="shrink-0 flex flex-col gap-3 w-full md:w-auto relative z-10">
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => {
+              setUploadMethod('drive');
+              setLocalFile(null);
+              setSubmitError('');
+              setIsModalOpen(true);
+            }}
             className="bg-white text-emerald-700 px-6 py-4 rounded-xl font-bold hover:bg-emerald-50 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center gap-2"
           >
             <Upload className="w-5 h-5" /> Subir Apunte
@@ -605,12 +694,12 @@ export function Notes() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filtered.map((note: any) => {
-          const hasPreview = note.file_url && isGoogleDriveUrl(note.file_url);
+          const hasPreview = !!note.file_url;
 
           return (
             <div
               key={note.id}
-              onClick={() => { if (note.file_url && isGoogleDriveUrl(note.file_url)) openPreview(note); }}
+              onClick={() => { if (note.file_url) openPreview(note); }}
               className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 hover:border-emerald-300 hover:shadow-xl transition-all duration-300 group flex flex-col h-full relative cursor-pointer"
             >
               {/* View count badge */}
@@ -696,16 +785,16 @@ export function Notes() {
               </p>
 
               {/* Footer */}
-              <div className="flex items-center justify-between pt-5 border-t border-stone-100">
-                <div className="flex items-center gap-2 text-sm text-stone-600">
-                  <div className="bg-stone-100 p-1.5 rounded-full">
+              <div className="flex items-center justify-between pt-5 border-t border-stone-100 min-w-0">
+                <div className="flex items-center gap-2 text-sm text-stone-600 min-w-0 mr-2">
+                  <div className="bg-stone-100 p-1.5 rounded-full shrink-0">
                     <User className="w-3.5 h-3.5 text-stone-500" />
                   </div>
-                  <span className="font-medium">{note.author_name}</span>
-                  <UserRoleBadge role={note.author_role} className="scale-[0.8] origin-left" />
+                  <span className="font-medium truncate">{note.author_name}</span>
+                  <UserRoleBadge role={note.author_role} className="scale-[0.8] origin-left shrink-0" />
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   {user && (user.id === note.author_id || user.tier === 'super_admin' || user.tier === 'admin') && (
                     <div className="flex items-center gap-1">
                       <button
@@ -741,22 +830,6 @@ export function Notes() {
                     >
                       <Eye className="w-4 h-4" /> Ver
                     </button>
-                  )}
-
-                  {/* Download button — premium only */}
-                  {hasPreview && (
-                    isPremium ? (
-                      <button
-                        onClick={() => handleDownload(note)}
-                        className="text-indigo-600 hover:text-indigo-800 font-bold text-sm flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-all"
-                      >
-                        <Download className="w-4 h-4" /> Descargar
-                      </button>
-                    ) : (
-                      <span className="text-stone-400 text-xs flex items-center gap-1 px-3 py-1.5 rounded-lg bg-stone-50 cursor-not-allowed" title="Solo para usuarios Premium">
-                        <Lock className="w-3.5 h-3.5" /> Premium
-                      </span>
-                    )
                   )}
                 </div>
               </div>
@@ -910,28 +983,106 @@ export function Notes() {
                   />
                 </div>
 
-                {/* Google Drive Link */}
-                <div className="space-y-1.5">
-                  <label htmlFor="note-url" className="block text-sm font-bold text-stone-700">
-                    Link de Google Drive
-                    <span className="text-red-500 ml-0.5">*</span>
-                  </label>
-                  <div className="relative">
-                    <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-                    <input
-                      id="note-url"
-                      type="url"
-                      required
-                      value={newNote.file_url}
-                      onChange={(e) => setNewNote({ ...newNote, file_url: e.target.value })}
-                      className="w-full pl-10 pr-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
-                      placeholder="https://docs.google.com/document/d/..."
-                    />
+                {/* Métodos de Carga (Tabs) */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-bold text-stone-700">Método de carga del contenido</label>
+                  <div className="flex bg-stone-100 p-1 rounded-xl gap-1">
+                    <button
+                      type="button"
+                      onClick={() => { setUploadMethod('drive'); setSubmitError(''); }}
+                      className={clsx(
+                        "flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer",
+                        uploadMethod === 'drive' ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
+                      )}
+                    >
+                      🔗 Link de Google Drive
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setUploadMethod('file'); setSubmitError(''); }}
+                      className={clsx(
+                        "flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer",
+                        uploadMethod === 'file' ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
+                      )}
+                    >
+                      📁 Subir Archivo
+                    </button>
                   </div>
-                  <p className="text-xs text-stone-400 mt-1">
-                    Asegurate de que el documento tenga permisos de "Cualquiera con el enlace puede ver".
-                  </p>
                 </div>
+
+                {/* Google Drive Link */}
+                {uploadMethod === 'drive' && (
+                  <div className="space-y-1.5">
+                    <label htmlFor="note-url" className="block text-sm font-bold text-stone-700">
+                      Link de Google Drive
+                      <span className="text-red-500 ml-0.5">*</span>
+                    </label>
+                    <div className="relative">
+                      <ExternalLink className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+                      <input
+                        id="note-url"
+                        type="url"
+                        required={uploadMethod === 'drive'}
+                        value={newNote.file_url}
+                        onChange={(e) => setNewNote({ ...newNote, file_url: e.target.value })}
+                        className="w-full pl-10 pr-4 py-3 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
+                        placeholder="https://docs.google.com/document/d/..."
+                      />
+                    </div>
+                    <p className="text-xs text-stone-400 mt-1">
+                      Asegurate de que el documento tenga permisos de "Cualquiera con el enlace puede ver".
+                    </p>
+                  </div>
+                )}
+
+                {/* File Upload Tab */}
+                {uploadMethod === 'file' && (
+                  <div className="space-y-3">
+                    <label className="block text-sm font-bold text-stone-700">Subir Archivo Local</label>
+                    <input
+                      type="file"
+                      id="note-file-upload"
+                      accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png"
+                      className="hidden"
+                      ref={fileInputRef}
+                      onChange={handleFileSelect}
+                    />
+                    <div
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      className={clsx(
+                        "border-2 border-dashed rounded-2xl p-6 text-center flex flex-col items-center justify-center transition-all cursor-pointer",
+                        isDragOver ? "border-emerald-500 bg-emerald-50/20" : "border-stone-200 hover:border-emerald-400 hover:bg-stone-50/55"
+                      )}
+                    >
+                      <FileUp className={clsx("w-8 h-8 mb-2 transition-colors", isDragOver ? "text-emerald-600" : "text-stone-450")} />
+                      <p className="text-sm font-bold text-stone-700">
+                        {isDragOver ? "¡Soltalo acá!" : "Arrastrá tu archivo acá o hace clic para buscar"}
+                      </p>
+                      <p className="text-xs text-stone-400 mt-1 leading-normal">
+                        PDF, Word, PowerPoint, Excel, TXT o imágenes
+                      </p>
+                    </div>
+                    {localFile && (
+                      <div className="flex items-center justify-between p-3 bg-stone-50 rounded-xl border border-stone-200">
+                        <div className="flex items-center gap-2 text-stone-750 min-w-0 flex-1">
+                          <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span className="text-sm font-medium truncate">{localFile.name}</span>
+                          <span className="text-xs text-stone-450 shrink-0">({(localFile.size / 1024 / 1024).toFixed(2)} MB)</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setLocalFile(null)}
+                          className="text-stone-400 hover:text-rose-600 p-1 transition-colors cursor-pointer shrink-0"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Description */}
                 <div className="space-y-1.5">
@@ -955,16 +1106,16 @@ export function Notes() {
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
-                    className="flex-1 px-4 py-3 text-stone-600 font-bold hover:bg-stone-100 rounded-xl transition-colors"
+                    className="flex-1 px-4 py-3 text-stone-600 font-bold hover:bg-stone-100 rounded-xl transition-colors font-bold cursor-pointer"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
-                    disabled={uploadNoteMutation.isPending}
-                    className="flex-1 px-4 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
+                    disabled={uploadNoteMutation.isPending || isUploadingFile}
+                    className="flex-1 px-4 py-3 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 cursor-pointer"
                   >
-                    {uploadNoteMutation.isPending ? 'Subiendo...' : (
+                    {uploadNoteMutation.isPending || isUploadingFile ? 'Subiendo...' : (
                       <>
                         <Upload className="w-4 h-4" />
                         Publicar Apunte
@@ -1241,9 +1392,9 @@ export function Notes() {
                     <div className="flex flex-col items-center justify-center h-full text-stone-500">
                       <FileText className="w-16 h-16 text-stone-300 mb-4" />
                       <p className="text-lg font-medium mb-2">No se puede previsualizar</p>
-                      <p className="text-sm">El link no es de Google Drive. Podés abrirlo en una pestaña nueva:</p>
+                      <p className="text-sm">Este archivo o enlace no admite previsualización directa. Podés abrirlo o descargarlo:</p>
                       <a href={previewNote.file_url} target="_blank" rel="noopener noreferrer" className="mt-3 text-emerald-600 underline flex items-center gap-1 font-bold">
-                        <ExternalLink className="w-4 h-4" /> Abrir enlace
+                        <ExternalLink className="w-4 h-4" /> Abrir o descargar archivo
                       </a>
                     </div>
                   )}

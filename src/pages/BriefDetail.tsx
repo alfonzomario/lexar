@@ -7,7 +7,6 @@ import Markdown from 'react-markdown';
 import { BalanzaLoader } from '../components/BalanzaLoader';
 import { useAuth } from '../contexts/AuthContext';
 import { HighlightableText } from '../components/HighlightableText';
-import { LegalTextRenderer } from '../components/LegalTextRenderer';
 import { BriefAiChat } from '../components/BriefAiChat';
 
 /** Formatea texto para lectura: normaliza espacios y preserva párrafos */

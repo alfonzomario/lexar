@@ -76,6 +76,11 @@ async function startServer() {
     fs.mkdirSync(cvUploadDir, { recursive: true });
   }
 
+  const notesUploadDir = path.join(process.cwd(), 'uploads', 'notes');
+  if (!fs.existsSync(notesUploadDir)) {
+    fs.mkdirSync(notesUploadDir, { recursive: true });
+  }
+
   initNormativaDb();
 
   const app = express();
@@ -95,6 +100,7 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(cookieParser());
   app.use('/api/auth', authRoutes);
+  app.use('/uploads/notes', express.static(path.join(process.cwd(), 'uploads', 'notes')));
 
   const getUserId = (req: express.Request): number | null => {
     const token = req.cookies?.token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
@@ -1325,8 +1331,8 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
           try {
             console.log('[Upload] Extrayendo texto de Word con mammoth...');
             const mammothResult = await mammoth.extractRawText({ buffer: file.buffer });
-            extractedText = mammothResult.value?.trim() || '';
-            console.log(`[Upload] Word parseado: ${extractedText.length.toLocaleString()} chars`);
+            extractedText = cleanPdfText(mammothResult.value?.trim() || '');
+            console.log(`[Upload] Word parseado y limpio: ${extractedText.length.toLocaleString()} chars`);
           } catch (e) {
             console.error('[Upload] mammoth extraction falló:', e);
             extractedText = '';
@@ -1364,8 +1370,8 @@ Respondé SOLO con JSON válido (sin markdown, sin explicaciones):
         }
       } else {
         // Text input mode
-        extractedText = textInput!.trim();
-        console.log(`[Upload] Texto manual: ${extractedText.length.toLocaleString()} chars | Usuario: ${userId}`);
+        extractedText = cleanPdfText(textInput!.trim());
+        console.log(`[Upload] Texto manual limpio: ${extractedText.length.toLocaleString()} chars | Usuario: ${userId}`);
         let safeText = extractedText;
         if (safeText.length > 80000) {
           safeText = safeText.substring(0, 80000);
@@ -1618,10 +1624,11 @@ Respondé SOLO con JSON válido:
     }
 
     try {
+      const cleanedFullText = full_text ? cleanPdfText(full_text) : (facts ? cleanPdfText(facts) : null);
       const result = db.prepare(`
         INSERT INTO case_briefs (title, facts, issue, rule, reasoning, holding, dissents, relevance, keywords, is_demo, court, year, parties, timeline, citations, full_text) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
-      `).run(title, facts, issue, rule, reasoning, holding, dissents || null, relevance, keywords, court || null, year ? Number(year) : null, parties || null, timeline ? JSON.stringify(timeline) : null, citations ? JSON.stringify(citations) : null, full_text || null);
+      `).run(title, facts, issue, rule, reasoning, holding, dissents || null, relevance, keywords, court || null, year ? Number(year) : null, parties || null, timeline ? JSON.stringify(timeline) : null, citations ? JSON.stringify(citations) : null, cleanedFullText);
 
       const insertRelation = db.prepare('INSERT INTO case_brief_subjects (case_brief_id, subject_id) VALUES (?, ?)');
       insertRelation.run(result.lastInsertRowid, subject_id);
@@ -3103,6 +3110,34 @@ Respondé SOLO con JSON válido:
     }
   });
 
+  // Endpoint to handle local file upload for notes
+  app.post('/api/notes/upload-file', upload.single('file'), (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Usuario no identificado' });
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se subió ningún archivo' });
+    }
+
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const allowedExtensions = ['.pdf', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.txt', '.jpg', '.jpeg', '.png'];
+    if (!allowedExtensions.includes(ext)) {
+      return res.status(400).json({ error: 'Formato de archivo no soportado' });
+    }
+
+    const uniqueName = `note-${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`;
+    const destPath = path.join(process.cwd(), 'uploads', 'notes', uniqueName);
+
+    try {
+      fs.writeFileSync(destPath, req.file.buffer);
+      const fileUrl = `/uploads/notes/${uniqueName}`;
+      res.json({ fileUrl });
+    } catch (err) {
+      console.error('Error writing note file:', err);
+      res.status(500).json({ error: 'Error al guardar el archivo en el servidor' });
+    }
+  });
+
   // Create a new note: cualquier usuario logueado puede subir; super_admin queda publicado, el resto pendiente de aprobación. Las vistas/votaciones en lo aprobado suman puntos al autor (500→Basic, 1000→Pro).
   app.post('/api/notes', (req, res) => {
     const userId = getUserId(req);
@@ -3113,7 +3148,7 @@ Respondé SOLO con JSON válido:
     try {
       const { title, subject_id, file_url, description, year, university_id, chair_name, profesor } = req.body;
       if (!title || !subject_id) return res.status(400).json({ error: 'Título y materia son obligatorios' });
-      if (!file_url || typeof file_url !== 'string' || !file_url.trim()) return res.status(400).json({ error: 'El link de Google Drive (público) es obligatorio' });
+      if (!file_url || typeof file_url !== 'string' || !file_url.trim()) return res.status(400).json({ error: 'El enlace o archivo es obligatorio' });
 
       const status = uploader.tier === 'super_admin' ? 'published' : 'pending';
       const date = new Date().toISOString().split('T')[0];
